@@ -2,22 +2,51 @@ import os from 'os';
 import path from 'path';
 import fs from 'fs';
 import type { ConfigPaths } from '../types/index.js';
-import { JeanClaudeError, ErrorCode } from '../types/index.js';
+import { ClaudeProfilesError, ErrorCode } from '../types/index.js';
 
 export function detectPlatform(): 'darwin' | 'linux' {
   const platform = os.platform();
   if (platform === 'darwin' || platform === 'linux') {
     return platform;
   }
-  throw new JeanClaudeError(
+  throw new ClaudeProfilesError(
     `Unsupported platform: ${platform}`,
     ErrorCode.UNSUPPORTED_PLATFORM,
-    'Jean-Claude supports macOS and Linux only.'
+    'claude-profiles supports macOS and Linux only.'
   );
 }
 
+const STATE_DIR = '.claude-profiles';
+const LEGACY_STATE_DIR = '.jean-claude';
+
+/**
+ * Location of claude-profiles' own state (profiles.json, state.json, sync repo).
+ *
+ * One-time migration: if the legacy `.jean-claude` dir exists and the new
+ * `.claude-profiles` dir does not, rename it in place so existing installs keep
+ * their profiles after the rebrand.
+ */
+export function getClaudeProfilesDir(): string {
+  const claudeDir = detectClaudeConfigDir();
+  const current = path.join(claudeDir, STATE_DIR);
+  const legacy = path.join(claudeDir, LEGACY_STATE_DIR);
+
+  if (!fs.existsSync(current) && fs.existsSync(legacy)) {
+    try {
+      fs.renameSync(legacy, current);
+    } catch {
+      // If migration fails (e.g. permissions), fall back to the legacy dir so
+      // the user's existing profiles remain reachable.
+      return legacy;
+    }
+  }
+
+  return current;
+}
+
+/** @deprecated Use `getClaudeProfilesDir`. Kept so existing imports keep working. */
 export function getJeanClaudeDir(): string {
-  return path.join(detectClaudeConfigDir(), '.jean-claude');
+  return getClaudeProfilesDir();
 }
 
 export function detectClaudeConfigDir(): string {

@@ -1,9 +1,13 @@
 import { describe, it, expect } from 'vitest';
-import { JeanClaudeError, ErrorCode } from '../../../src/types/index.js';
+import {
+  ClaudeProfilesError,
+  JeanClaudeError,
+  ErrorCode,
+} from '../../../src/types/index.js';
 
-describe('JeanClaudeError', () => {
+describe('ClaudeProfilesError', () => {
   it('should create error with message and code', () => {
-    const error = new JeanClaudeError(
+    const error = new ClaudeProfilesError(
       'Test error message',
       ErrorCode.NOT_INITIALIZED
     );
@@ -11,20 +15,26 @@ describe('JeanClaudeError', () => {
     expect(error.message).toBe('Test error message');
     expect(error.code).toBe(ErrorCode.NOT_INITIALIZED);
     expect(error.suggestion).toBeUndefined();
-    expect(error.name).toBe('JeanClaudeError');
+    expect(error.name).toBe('ClaudeProfilesError');
     expect(error instanceof Error).toBe(true);
   });
 
   it('should create error with message, code, and suggestion', () => {
-    const error = new JeanClaudeError(
+    const error = new ClaudeProfilesError(
       'Test error message',
       ErrorCode.NOT_INITIALIZED,
-      'Run jean-claude init first'
+      'Run claude-profiles init first'
     );
 
     expect(error.message).toBe('Test error message');
     expect(error.code).toBe(ErrorCode.NOT_INITIALIZED);
-    expect(error.suggestion).toBe('Run jean-claude init first');
+    expect(error.suggestion).toBe('Run claude-profiles init first');
+  });
+
+  it('should keep JeanClaudeError as a backwards-compatible alias', () => {
+    expect(JeanClaudeError).toBe(ClaudeProfilesError);
+    const error = new JeanClaudeError('legacy', ErrorCode.NOT_INITIALIZED);
+    expect(error instanceof ClaudeProfilesError).toBe(true);
   });
 
   it('should have correct error codes enum', () => {
@@ -38,15 +48,19 @@ describe('JeanClaudeError', () => {
     expect(ErrorCode.UNSUPPORTED_PLATFORM).toBe('UNSUPPORTED_PLATFORM');
     expect(ErrorCode.ALREADY_EXISTS).toBe('ALREADY_EXISTS');
     expect(ErrorCode.CLONE_FAILED).toBe('CLONE_FAILED');
+    expect(ErrorCode.RATE_LIMITED).toBe('RATE_LIMITED');
+    expect(ErrorCode.ALL_PROFILES_EXHAUSTED).toBe('ALL_PROFILES_EXHAUSTED');
+    expect(ErrorCode.CLAUDE_NOT_FOUND).toBe('CLAUDE_NOT_FOUND');
+    expect(ErrorCode.NO_CHAIN).toBe('NO_CHAIN');
   });
 
   it('should maintain stack trace', () => {
-    const error = new JeanClaudeError(
+    const error = new ClaudeProfilesError(
       'Test error',
       ErrorCode.NOT_INITIALIZED
     );
 
     expect(error.stack).toBeDefined();
-    expect(error.stack).toContain('JeanClaudeError');
+    expect(error.stack).toContain('ClaudeProfilesError');
   });
 });

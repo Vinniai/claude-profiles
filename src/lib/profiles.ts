@@ -1,8 +1,8 @@
 import fs from 'fs-extra';
 import path from 'path';
 import os from 'os';
-import { getConfigPaths, getJeanClaudeDir } from './paths.js';
-import { JeanClaudeError, ErrorCode } from '../types/index.js';
+import { getConfigPaths, getClaudeProfilesDir } from './paths.js';
+import { ClaudeProfilesError, ErrorCode } from '../types/index.js';
 import type { ProfileConfig, Profile } from '../types/index.js';
 
 const PROFILES_FILE = 'profiles.json';
@@ -21,7 +21,7 @@ export const SHARED_ITEMS = [
 ];
 
 function getProfilesPath(): string {
-  return path.join(getJeanClaudeDir(), PROFILES_FILE);
+  return path.join(getClaudeProfilesDir(), PROFILES_FILE);
 }
 
 export async function loadProfiles(): Promise<ProfileConfig> {
@@ -47,6 +47,10 @@ export function getProfileConfigDir(name: string): string {
 export interface CreateProfileOptions {
   shareStatusline?: boolean;
   shareClaudeMd?: boolean;
+  /** Human-friendly description stored on the profile. */
+  description?: string;
+  /** Lower numbers are tried first when running without an explicit chain. */
+  priority?: number;
 }
 
 export async function createProfile(
@@ -57,10 +61,10 @@ export async function createProfile(
   const config = await loadProfiles();
 
   if (config.profiles[name]) {
-    throw new JeanClaudeError(
+    throw new ClaudeProfilesError(
       `Profile "${name}" already exists`,
       ErrorCode.ALREADY_EXISTS,
-      `Use 'jean-claude profile list' to see existing profiles.`
+      `Use 'claude-profiles profile list' to see existing profiles.`
     );
   }
 
@@ -72,7 +76,7 @@ export async function createProfile(
     await fs.mkdir(configDir, { recursive: false });
   } catch (err: unknown) {
     if (err && typeof err === 'object' && 'code' in err && (err as { code: string }).code === 'EEXIST') {
-      throw new JeanClaudeError(
+      throw new ClaudeProfilesError(
         `Profile directory ${configDir} already exists on disk`,
         ErrorCode.ALREADY_EXISTS,
         `Remove it manually or choose a different profile name.`
@@ -111,6 +115,8 @@ export async function createProfile(
     alias,
     configDir,
   };
+  if (options.description) profile.description = options.description;
+  if (typeof options.priority === 'number') profile.priority = options.priority;
   config.profiles[name] = profile;
   await saveProfiles(config);
 
@@ -149,10 +155,10 @@ export async function refreshSymlinks(name: string): Promise<string[]> {
   const profile = config.profiles[name];
 
   if (!profile) {
-    throw new JeanClaudeError(
+    throw new ClaudeProfilesError(
       `Profile "${name}" not found`,
       ErrorCode.NOT_INITIALIZED,
-      `Use 'jean-claude profile list' to see existing profiles.`
+      `Use 'claude-profiles profile list' to see existing profiles.`
     );
   }
 
@@ -165,10 +171,10 @@ export async function deleteProfile(name: string): Promise<Profile> {
   const profile = config.profiles[name];
 
   if (!profile) {
-    throw new JeanClaudeError(
+    throw new ClaudeProfilesError(
       `Profile "${name}" not found`,
       ErrorCode.NOT_INITIALIZED,
-      `Use 'jean-claude profile list' to see existing profiles.`
+      `Use 'claude-profiles profile list' to see existing profiles.`
     );
   }
 
@@ -184,23 +190,85 @@ export async function deleteProfile(name: string): Promise<Profile> {
   return profile;
 }
 
+// Marker comment written above each managed alias. We always write the new
+// `claude-profiles` marker, but match the legacy `jean-claude` one too so old
+// installs are still recognised and cleaned up.
+const PROFILE_MARKER = 'claude-profiles profile';
+const CHAIN_MARKER = 'claude-profiles chain';
+const MARKER_BRANDS = '(?:jean-claude|claude-profiles)';
+
 export function getShellAliasLine(profile: Profile): string {
   return `alias ${profile.alias}='CLAUDE_CONFIG_DIR="${profile.configDir}" claude'`;
 }
 
 export function getShellAliasBlock(name: string, profile: Profile): string {
-  return `\n# jean-claude profile: ${name}\n${getShellAliasLine(profile)}\n`;
+  return `\n# ${PROFILE_MARKER}: ${name}\n${getShellAliasLine(profile)}\n`;
+}
+
+/** Alias that runs a fallback chain via the router. */
+export function getChainAliasLine(chainName: string): string {
+  return `alias claude-${chainName}='claude-profiles run --chain ${chainName} --'`;
+}
+
+export function getChainAliasBlock(chainName: string): string {
+  return `\n# ${CHAIN_MARKER}: ${chainName}\n${getChainAliasLine(chainName)}\n`;
 }
 
 function escapeRegExp(str: string): string {
   return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
-function profileAliasRegex(name: string): RegExp {
+function aliasRegex(kind: 'profile' | 'chain', name: string): RegExp {
   return new RegExp(
-    `\\n# jean-claude profile: ${escapeRegExp(name)}\\n[^\\n]+\\n`,
+    `\\n# ${MARKER_BRANDS} ${kind}: ${escapeRegExp(name)}\\n[^\\n]+\\n`,
     'g'
   );
+}
+
+function markerMatches(
+  content: string,
+  kind: 'profile' | 'chain',
+  name: string
+): boolean {
+  return new RegExp(`# ${MARKER_BRANDS} ${kind}: ${escapeRegExp(name)}\\n`).test(
+    content
+  );
+}
+
+async function installAliasBlock(
+  kind: 'profile' | 'chain',
+  name: string,
+  block: string,
+  shellConfigFile: string
+): Promise<void> {
+  const rcPath = path.join(os.homedir(), shellConfigFile);
+
+  if (await fs.pathExists(rcPath)) {
+    const content = await fs.readFile(rcPath, 'utf-8');
+    if (markerMatches(content, kind, name)) {
+      const updated = content.replace(aliasRegex(kind, name), block);
+      await fs.writeFile(rcPath, updated);
+      return;
+    }
+  }
+
+  await fs.appendFile(rcPath, block);
+}
+
+async function removeAliasBlock(
+  kind: 'profile' | 'chain',
+  name: string,
+  shellConfigFile: string
+): Promise<boolean> {
+  const rcPath = path.join(os.homedir(), shellConfigFile);
+  if (!(await fs.pathExists(rcPath))) return false;
+
+  const content = await fs.readFile(rcPath, 'utf-8');
+  if (!markerMatches(content, kind, name)) return false;
+
+  const updated = content.replace(aliasRegex(kind, name), '\n');
+  await fs.writeFile(rcPath, updated);
+  return true;
 }
 
 export async function installShellAlias(
@@ -208,41 +276,38 @@ export async function installShellAlias(
   profile: Profile,
   shellConfigFile: string
 ): Promise<void> {
-  const rcPath = path.join(os.homedir(), shellConfigFile);
-  const block = getShellAliasBlock(name, profile);
-
-  // Check if alias already exists
-  if (await fs.pathExists(rcPath)) {
-    const content = await fs.readFile(rcPath, 'utf-8');
-    if (content.includes(`jean-claude profile: ${name}`)) {
-      const updated = content.replace(profileAliasRegex(name), block);
-      await fs.writeFile(rcPath, updated);
-      return;
-    }
-  }
-
-  // Append alias block
-  await fs.appendFile(rcPath, block);
+  await installAliasBlock(
+    'profile',
+    name,
+    getShellAliasBlock(name, profile),
+    shellConfigFile
+  );
 }
 
 export async function removeShellAlias(
   name: string,
   shellConfigFile: string
 ): Promise<boolean> {
-  const rcPath = path.join(os.homedir(), shellConfigFile);
+  return removeAliasBlock('profile', name, shellConfigFile);
+}
 
-  if (!(await fs.pathExists(rcPath))) {
-    return false;
-  }
+export async function installChainAlias(
+  chainName: string,
+  shellConfigFile: string
+): Promise<void> {
+  await installAliasBlock(
+    'chain',
+    chainName,
+    getChainAliasBlock(chainName),
+    shellConfigFile
+  );
+}
 
-  const content = await fs.readFile(rcPath, 'utf-8');
-  if (!content.includes(`jean-claude profile: ${name}`)) {
-    return false;
-  }
-
-  const updated = content.replace(profileAliasRegex(name), '\n');
-  await fs.writeFile(rcPath, updated);
-  return true;
+export async function removeChainAlias(
+  chainName: string,
+  shellConfigFile: string
+): Promise<boolean> {
+  return removeAliasBlock('chain', chainName, shellConfigFile);
 }
 
 export function detectShellConfigFiles(): Array<{ name: string; value: string }> {
@@ -271,4 +336,94 @@ export function detectShellConfigFiles(): Array<{ name: string; value: string }>
   }
 
   return options;
+}
+
+// ---------------------------------------------------------------------------
+// Fallback chains — ordered lists of profiles tried in turn by `run`.
+// ---------------------------------------------------------------------------
+
+function assertProfilesExist(config: ProfileConfig, names: string[]): void {
+  const missing = names.filter((n) => !config.profiles[n]);
+  if (missing.length > 0) {
+    throw new ClaudeProfilesError(
+      `Unknown profile(s): ${missing.join(', ')}`,
+      ErrorCode.NOT_INITIALIZED,
+      `Create them first, or run 'claude-profiles profile list'.`
+    );
+  }
+}
+
+export async function createChain(
+  name: string,
+  profileNames: string[]
+): Promise<string[]> {
+  if (profileNames.length === 0) {
+    throw new ClaudeProfilesError(
+      `Chain "${name}" needs at least one profile`,
+      ErrorCode.INVALID_CONFIG,
+      `Pass --profiles a,b,c`
+    );
+  }
+  const config = await loadProfiles();
+  assertProfilesExist(config, profileNames);
+  config.chains = config.chains ?? {};
+  config.chains[name] = profileNames;
+  await saveProfiles(config);
+  return profileNames;
+}
+
+export async function deleteChain(name: string): Promise<void> {
+  const config = await loadProfiles();
+  if (!config.chains?.[name]) {
+    throw new ClaudeProfilesError(
+      `Chain "${name}" not found`,
+      ErrorCode.NO_CHAIN,
+      `Run 'claude-profiles chain list' to see existing chains.`
+    );
+  }
+  delete config.chains[name];
+  await saveProfiles(config);
+}
+
+export async function addToChain(
+  name: string,
+  profileName: string
+): Promise<string[]> {
+  const config = await loadProfiles();
+  assertProfilesExist(config, [profileName]);
+  config.chains = config.chains ?? {};
+  const chain = config.chains[name] ?? [];
+  if (!chain.includes(profileName)) chain.push(profileName);
+  config.chains[name] = chain;
+  await saveProfiles(config);
+  return chain;
+}
+
+export async function removeFromChain(
+  name: string,
+  profileName: string
+): Promise<string[]> {
+  const config = await loadProfiles();
+  const chain = config.chains?.[name];
+  if (!chain) {
+    throw new ClaudeProfilesError(
+      `Chain "${name}" not found`,
+      ErrorCode.NO_CHAIN,
+      `Run 'claude-profiles chain list' to see existing chains.`
+    );
+  }
+  const updated = chain.filter((n) => n !== profileName);
+  config.chains![name] = updated;
+  await saveProfiles(config);
+  return updated;
+}
+
+export async function getChain(name: string): Promise<string[] | undefined> {
+  const config = await loadProfiles();
+  return config.chains?.[name];
+}
+
+export async function listChains(): Promise<Record<string, string[]>> {
+  const config = await loadProfiles();
+  return config.chains ?? {};
 }

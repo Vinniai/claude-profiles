@@ -1,5 +1,6 @@
 import { Command } from 'commander';
 import chalk from 'chalk';
+import { spawn } from 'child_process';
 import { logger, formatPath } from '../utils/logger.js';
 import { confirm, input, select } from '../utils/prompts.js';
 import {
@@ -12,11 +13,13 @@ import {
   removeShellAlias,
   detectShellConfigFiles,
   refreshSymlinks,
+  addToChain,
+  installChainAlias,
   SHARED_ITEMS,
   type CreateProfileOptions,
 } from '../lib/profiles.js';
-import { getJeanClaudeDir } from '../lib/paths.js';
-import { JeanClaudeError, ErrorCode } from '../types/index.js';
+import { getClaudeProfilesDir } from '../lib/paths.js';
+import { ClaudeProfilesError, ErrorCode } from '../types/index.js';
 import fs from 'fs-extra';
 
 const profileCreateCommand = new Command('create')
@@ -28,14 +31,17 @@ const profileCreateCommand = new Command('create')
   .option('--no-share-statusline', 'Do not share statusline.sh with this profile')
   .option('--share-claude-md', 'Share CLAUDE.md with this profile (symlink)')
   .option('--no-share-claude-md', 'Do not share CLAUDE.md with this profile')
-  .action(async (nameArg: string | undefined, options: { yes?: boolean; shell?: string; shareStatusline?: boolean; shareClaudeMd?: boolean }) => {
-    // Verify jean-claude is initialized
-    const jcDir = getJeanClaudeDir();
+  .option('--description <text>', 'Human-friendly description (e.g. "work Max account")')
+  .option('--priority <n>', 'Fallback priority (lower is tried first)', (v) => parseInt(v, 10))
+  .option('--chain <name>', 'Also append this profile to the named fallback chain')
+  .action(async (nameArg: string | undefined, options: { yes?: boolean; shell?: string; shareStatusline?: boolean; shareClaudeMd?: boolean; description?: string; priority?: number; chain?: string }) => {
+    // Verify claude-profiles is initialized
+    const jcDir = getClaudeProfilesDir();
     if (!(await fs.pathExists(jcDir))) {
-      throw new JeanClaudeError(
-        'Jean-Claude is not initialized',
+      throw new ClaudeProfilesError(
+        'claude-profiles is not initialized',
         ErrorCode.NOT_INITIALIZED,
-        'Run `jean-claude init` first.'
+        'Run `claude-profiles init` first.'
       );
     }
 
@@ -44,7 +50,7 @@ const profileCreateCommand = new Command('create')
       nameArg || (await input('Profile name (e.g., work, personal):'));
 
     if (!name || !/^[a-z][a-z0-9-]*$/.test(name)) {
-      throw new JeanClaudeError(
+      throw new ClaudeProfilesError(
         'Invalid profile name',
         ErrorCode.INVALID_CONFIG,
         'Use lowercase letters, numbers, and hyphens. Must start with a letter.'
@@ -56,14 +62,14 @@ const profileCreateCommand = new Command('create')
     // Fail early if profile already exists (before prompting for options)
     const existingConfig = await loadProfiles();
     if (existingConfig.profiles[name]) {
-      throw new JeanClaudeError(
+      throw new ClaudeProfilesError(
         `Profile "${name}" already exists`,
         ErrorCode.ALREADY_EXISTS,
-        `Use 'jean-claude profile list' to see existing profiles.`
+        `Use 'claude-profiles profile list' to see existing profiles.`
       );
     }
     if (await fs.pathExists(configDir)) {
-      throw new JeanClaudeError(
+      throw new ClaudeProfilesError(
         `Profile directory ${configDir} already exists on disk`,
         ErrorCode.ALREADY_EXISTS,
         `Remove it manually or choose a different profile name.`
@@ -84,6 +90,10 @@ const profileCreateCommand = new Command('create')
 
     // Determine optional sharing preferences
     const createOptions: CreateProfileOptions = {};
+    if (options.description) createOptions.description = options.description;
+    if (typeof options.priority === 'number' && !Number.isNaN(options.priority)) {
+      createOptions.priority = options.priority;
+    }
 
     if (options.shareStatusline !== undefined) {
       createOptions.shareStatusline = options.shareStatusline;
@@ -134,6 +144,15 @@ const profileCreateCommand = new Command('create')
     await installShellAlias(name, profile, shellFile);
     logger.success(`Alias added to ~/${shellFile}`);
 
+    // Optionally add this profile to a fallback chain
+    if (options.chain) {
+      const chain = await addToChain(options.chain, name);
+      await installChainAlias(options.chain, shellFile);
+      logger.success(
+        `Added to chain "${options.chain}": ${chain.join(' → ')}`
+      );
+    }
+
     // Done
     logger.step(3, 3, 'Done!');
     console.log();
@@ -162,7 +181,7 @@ const profileListCommand = new Command('list')
 
     if (names.length === 0) {
       logger.dim('No profiles configured.');
-      logger.dim('Create one with: jean-claude profile create <name>');
+      logger.dim('Create one with: claude-profiles profile create <name>');
       return;
     }
 
@@ -231,7 +250,7 @@ const profileDeleteCommand = new Command('delete')
       ));
 
     if (!config.profiles[name]) {
-      throw new JeanClaudeError(
+      throw new ClaudeProfilesError(
         `Profile "${name}" not found`,
         ErrorCode.NOT_INITIALIZED,
         `Available profiles: ${names.join(', ')}`
@@ -300,9 +319,64 @@ const profileRefreshCommand = new Command('refresh')
     logger.success(`Symlinks refreshed: ${created.join(', ')}`);
   });
 
+const profileLoginCommand = new Command('login')
+  .description("Authenticate a profile's OAuth account (runs `claude` in its config dir)")
+  .argument('[name]', 'Profile to log in')
+  .action(async (nameArg?: string) => {
+    const config = await loadProfiles();
+    const names = Object.keys(config.profiles);
+    if (names.length === 0) {
+      logger.dim('No profiles configured.');
+      logger.dim('Create one with: claude-profiles profile create <name>');
+      return;
+    }
+
+    const name =
+      nameArg ||
+      (await select(
+        'Which profile to log in?',
+        names.map((n) => ({ name: n, value: n }))
+      ));
+
+    const profile = config.profiles[name];
+    if (!profile) {
+      throw new ClaudeProfilesError(
+        `Profile "${name}" not found`,
+        ErrorCode.NOT_INITIALIZED,
+        `Available profiles: ${names.join(', ')}`
+      );
+    }
+
+    logger.dim(
+      `Launching Claude for profile "${name}". Use /login inside, then exit.`
+    );
+    const bin = process.env.CLAUDE_PROFILES_CLAUDE_BIN || 'claude';
+    await new Promise<void>((resolve, reject) => {
+      const child = spawn(bin, ['/login'], {
+        env: { ...process.env, CLAUDE_CONFIG_DIR: profile.configDir },
+        stdio: 'inherit',
+      });
+      child.on('error', (err: NodeJS.ErrnoException) => {
+        if (err.code === 'ENOENT') {
+          reject(
+            new ClaudeProfilesError(
+              `Could not find the "${bin}" CLI on your PATH`,
+              ErrorCode.CLAUDE_NOT_FOUND,
+              'Install Claude Code, or set CLAUDE_PROFILES_CLAUDE_BIN to its path.'
+            )
+          );
+          return;
+        }
+        reject(err);
+      });
+      child.on('close', () => resolve());
+    });
+  });
+
 export const profileCommand = new Command('profile')
   .description('Manage Claude Code profiles for multiple accounts')
   .addCommand(profileCreateCommand)
   .addCommand(profileListCommand)
   .addCommand(profileDeleteCommand)
-  .addCommand(profileRefreshCommand);
+  .addCommand(profileRefreshCommand)
+  .addCommand(profileLoginCommand);

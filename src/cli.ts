@@ -8,8 +8,12 @@ import {
   statusCommand,
   profileCommand,
   syncCommand,
+  runCommand,
+  chainCommand,
+  handoffCommand,
+  hookCommand,
 } from './commands/index.js';
-import { JeanClaudeError } from './types/index.js';
+import { ClaudeProfilesError } from './types/index.js';
 import { printLogo } from './utils/logo.js';
 
 const require = createRequire(import.meta.url);
@@ -19,17 +23,27 @@ export function createProgram(): Command {
   const program = new Command();
 
   program
-    .name('jean-claude')
-    .description('Manage and sync Claude Code configuration across machines')
+    .name('claude-profiles')
+    .description(
+      'Manage multiple Claude Code profiles, route across OAuth accounts, and fall back on limit errors'
+    )
     .version(VERSION)
+    // Allow `run` to forward unknown options through to `claude`.
+    .enablePositionalOptions()
     .addHelpText('before', () => {
       printLogo();
       return '';
     });
 
+  program.addCommand(profileCommand);
+  program.addCommand(chainCommand);
+  program.addCommand(runCommand);
+  program.addCommand(handoffCommand);
   program.addCommand(initCommand);
   program.addCommand(syncCommand);
-  program.addCommand(profileCommand);
+
+  // Hidden internal dispatcher invoked by Claude Code hooks.
+  program.addCommand(hookCommand, { hidden: true });
 
   // Deprecated — kept as hidden commands with redirect messages
   program.addCommand(pullCommand);
@@ -48,7 +62,7 @@ export async function run(argv: string[]): Promise<void> {
   try {
     await program.parseAsync(argv);
   } catch (err) {
-    if (err instanceof JeanClaudeError) {
+    if (err instanceof ClaudeProfilesError) {
       console.error(chalk.red('error') + ' ' + err.message);
       if (err.suggestion) {
         console.log('\n' + chalk.dim('Suggestion: ') + err.suggestion);
