@@ -1,7 +1,13 @@
 import fs from 'fs-extra';
 import path from 'path';
 import { getClaudeProfilesDir } from './paths.js';
-import type { ProfileRuntimeState, RuntimeStateFile } from '../types/index.js';
+import { mergeBudget } from './usage.js';
+import type {
+  ProfileRuntimeState,
+  RoutingEventKind,
+  RuntimeStateFile,
+  UsageBudget,
+} from '../types/index.js';
 
 /**
  * Runtime health (cooldowns / needs-auth) for profiles. Persisted separately
@@ -63,12 +69,14 @@ export async function setProfileCooldown(
   name: string,
   cooldownUntil: Date,
   error: string,
-  now: Date = new Date()
+  now: Date = new Date(),
+  kind: RoutingEventKind = 'limit'
 ): Promise<void> {
   await updateProfileState(name, {
     cooldownUntil: cooldownUntil.toISOString(),
     lastError: error,
     lastErrorAt: now.toISOString(),
+    lastEventKind: kind,
     needsAuth: false,
   });
 }
@@ -82,11 +90,55 @@ export async function markNeedsAuth(
     needsAuth: true,
     lastError: error,
     lastErrorAt: now.toISOString(),
+    lastEventKind: 'auth',
   });
 }
 
 export async function clearProfileState(name: string): Promise<void> {
   await updateProfileState(name, null);
+}
+
+/**
+ * Merge a freshly-observed usage budget into a profile's stored budget. Used by
+ * the router after each run to keep session/weekly figures current for strategic
+ * routing. Does nothing if the observation is empty.
+ */
+export async function recordUsage(
+  name: string,
+  observed: UsageBudget
+): Promise<void> {
+  if (!observed.session && !observed.weekly) return;
+  const current = await getProfileState(name);
+  const usage = mergeBudget(current.usage, observed);
+  await updateProfileState(name, { usage });
+}
+
+/** Overwrite a profile's stored usage budget outright (manual `usage set`). */
+export async function setUsage(
+  name: string,
+  usage: UsageBudget
+): Promise<void> {
+  await updateProfileState(name, { usage });
+}
+
+/** Drop a profile's stored usage budget. */
+export async function clearUsage(name: string): Promise<void> {
+  const current = await getProfileState(name);
+  if (!current.usage) return;
+  const next = { ...current };
+  delete next.usage;
+  // Replace wholesale so the `usage` key is actually removed.
+  const state = await loadState();
+  state.profiles[name] = next;
+  await saveState(state);
+}
+
+/** Stamp a profile as just-used, so `round-robin` can spread load over time. */
+export async function markUsed(
+  name: string,
+  now: Date = new Date()
+): Promise<void> {
+  await updateProfileState(name, { lastUsedAt: now.toISOString() });
 }
 
 export async function clearAllState(): Promise<void> {

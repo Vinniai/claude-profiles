@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "claude-profiles": {
+      "command": "claude-profiles",
+      "args": ["channel"]
+    }
+  }
+}

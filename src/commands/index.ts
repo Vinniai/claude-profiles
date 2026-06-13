@@ -8,3 +8,6 @@ export { runCommand } from './run.js';
 export { chainCommand } from './chain.js';
 export { handoffCommand } from './handoff.js';
 export { hookCommand } from './hook.js';
+export { strategyCommand } from './strategy.js';
+export { usageCommand } from './usage.js';
+export { channelCommand } from './channel.js';

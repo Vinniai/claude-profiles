@@ -1,7 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import {
   ClaudeProfilesError,
-  JeanClaudeError,
   ErrorCode,
 } from '../../../src/types/index.js';
 
@@ -29,12 +28,6 @@ describe('ClaudeProfilesError', () => {
     expect(error.message).toBe('Test error message');
     expect(error.code).toBe(ErrorCode.NOT_INITIALIZED);
     expect(error.suggestion).toBe('Run claude-profiles init first');
-  });
-
-  it('should keep JeanClaudeError as a backwards-compatible alias', () => {
-    expect(JeanClaudeError).toBe(ClaudeProfilesError);
-    const error = new JeanClaudeError('legacy', ErrorCode.NOT_INITIALIZED);
-    expect(error instanceof ClaudeProfilesError).toBe(true);
   });
 
   it('should have correct error codes enum', () => {

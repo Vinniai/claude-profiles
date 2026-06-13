@@ -21,7 +21,7 @@ describe('sync.ts', () => {
 
   beforeEach(async () => {
     // Create a temporary directory for tests
-    tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'jean-claude-test-'));
+    tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'claude-profiles-test-'));
   });
 
   afterEach(async () => {
@@ -101,34 +101,34 @@ describe('sync.ts', () => {
         expect(meta1.machineId).toBe(meta2.machineId);
       });
 
-      it('should include managedBy field set to jean-claude', () => {
+      it('should include managedBy field set to claude-profiles', () => {
         const meta = createMetaJson('/test/path');
 
         expect(meta).toHaveProperty('managedBy');
-        expect(meta.managedBy).toBe('jean-claude');
+        expect(meta.managedBy).toBe('claude-profiles');
       });
     });
 
     describe('writeMetaJson and readMetaJson', () => {
       it('should write and read metadata correctly', async () => {
         const meta = createMetaJson('/test/path');
-        const jeanClaudeDir = path.join(tempDir, '.jean-claude');
-        await fs.ensureDir(jeanClaudeDir);
+        const claudeProfilesDir = path.join(tempDir, '.claude-profiles');
+        await fs.ensureDir(claudeProfilesDir);
 
-        await writeMetaJson(jeanClaudeDir, meta);
+        await writeMetaJson(claudeProfilesDir, meta);
 
-        const metaPath = path.join(jeanClaudeDir, 'meta.json');
+        const metaPath = path.join(claudeProfilesDir, 'meta.json');
         expect(await fs.pathExists(metaPath)).toBe(true);
 
-        const readMeta = await readMetaJson(jeanClaudeDir);
+        const readMeta = await readMetaJson(claudeProfilesDir);
         expect(readMeta).toEqual(meta);
       });
 
       it('should return null when meta.json does not exist', async () => {
-        const jeanClaudeDir = path.join(tempDir, '.jean-claude');
-        await fs.ensureDir(jeanClaudeDir);
+        const claudeProfilesDir = path.join(tempDir, '.claude-profiles');
+        await fs.ensureDir(claudeProfilesDir);
 
-        const meta = await readMetaJson(jeanClaudeDir);
+        const meta = await readMetaJson(claudeProfilesDir);
         expect(meta).toBeNull();
       });
     });
@@ -136,15 +136,15 @@ describe('sync.ts', () => {
     describe('updateLastSync', () => {
       it('should update the lastSync timestamp', async () => {
         const meta = createMetaJson('/test/path');
-        const jeanClaudeDir = path.join(tempDir, '.jean-claude');
-        await fs.ensureDir(jeanClaudeDir);
-        await writeMetaJson(jeanClaudeDir, meta);
+        const claudeProfilesDir = path.join(tempDir, '.claude-profiles');
+        await fs.ensureDir(claudeProfilesDir);
+        await writeMetaJson(claudeProfilesDir, meta);
 
         expect(meta.lastSync).toBeNull();
 
-        await updateLastSync(jeanClaudeDir);
+        await updateLastSync(claudeProfilesDir);
 
-        const updatedMeta = await readMetaJson(jeanClaudeDir);
+        const updatedMeta = await readMetaJson(claudeProfilesDir);
         expect(updatedMeta?.lastSync).not.toBeNull();
         if (updatedMeta?.lastSync) {
           expect(new Date(updatedMeta.lastSync).getTime()).toBeGreaterThan(0);
@@ -154,41 +154,41 @@ describe('sync.ts', () => {
   });
 
   describe('syncFromClaudeConfig', () => {
-    it('should copy files from Claude config to jean-claude repo', async () => {
+    it('should copy files from Claude config to claude-profiles repo', async () => {
       const claudeDir = path.join(tempDir, '.claude');
-      const jeanClaudeDir = path.join(tempDir, '.jean-claude');
+      const claudeProfilesDir = path.join(tempDir, '.claude-profiles');
 
       await fs.ensureDir(claudeDir);
-      await fs.ensureDir(jeanClaudeDir);
+      await fs.ensureDir(claudeProfilesDir);
 
       // Create test files
       await fs.writeFile(path.join(claudeDir, 'CLAUDE.md'), '# Instructions');
       await fs.writeFile(path.join(claudeDir, 'settings.json'), '{"theme":"dark"}');
 
-      const results = await syncFromClaudeConfig(claudeDir, jeanClaudeDir);
+      const results = await syncFromClaudeConfig(claudeDir, claudeProfilesDir);
 
       // Should have synced files
       expect(results.length).toBeGreaterThan(0);
-      expect(await fs.pathExists(path.join(jeanClaudeDir, 'CLAUDE.md'))).toBe(true);
-      expect(await fs.pathExists(path.join(jeanClaudeDir, 'settings.json'))).toBe(true);
+      expect(await fs.pathExists(path.join(claudeProfilesDir, 'CLAUDE.md'))).toBe(true);
+      expect(await fs.pathExists(path.join(claudeProfilesDir, 'settings.json'))).toBe(true);
 
-      const claudeMd = await fs.readFile(path.join(jeanClaudeDir, 'CLAUDE.md'), 'utf-8');
+      const claudeMd = await fs.readFile(path.join(claudeProfilesDir, 'CLAUDE.md'), 'utf-8');
       expect(claudeMd).toBe('# Instructions');
     });
 
     it('should copy statusline.sh from Claude config', async () => {
       const claudeDir = path.join(tempDir, '.claude');
-      const jeanClaudeDir = path.join(tempDir, '.jean-claude');
+      const claudeProfilesDir = path.join(tempDir, '.claude-profiles');
 
       await fs.ensureDir(claudeDir);
-      await fs.ensureDir(jeanClaudeDir);
+      await fs.ensureDir(claudeProfilesDir);
 
       await fs.writeFile(path.join(claudeDir, 'statusline.sh'), '#!/bin/bash\necho "status"');
 
-      const results = await syncFromClaudeConfig(claudeDir, jeanClaudeDir);
+      const results = await syncFromClaudeConfig(claudeDir, claudeProfilesDir);
 
-      expect(await fs.pathExists(path.join(jeanClaudeDir, 'statusline.sh'))).toBe(true);
-      const content = await fs.readFile(path.join(jeanClaudeDir, 'statusline.sh'), 'utf-8');
+      expect(await fs.pathExists(path.join(claudeProfilesDir, 'statusline.sh'))).toBe(true);
+      const content = await fs.readFile(path.join(claudeProfilesDir, 'statusline.sh'), 'utf-8');
       expect(content).toBe('#!/bin/bash\necho "status"');
 
       const statuslineResult = results.find(r => r.file === 'statusline.sh');
@@ -197,31 +197,31 @@ describe('sync.ts', () => {
 
     it('should sync hooks directory', async () => {
       const claudeDir = path.join(tempDir, '.claude');
-      const jeanClaudeDir = path.join(tempDir, '.jean-claude');
+      const claudeProfilesDir = path.join(tempDir, '.claude-profiles');
 
       await fs.ensureDir(path.join(claudeDir, 'hooks'));
-      await fs.ensureDir(jeanClaudeDir);
+      await fs.ensureDir(claudeProfilesDir);
 
       await fs.writeFile(path.join(claudeDir, 'hooks', 'test.sh'), '#!/bin/bash\necho "test"');
 
-      const results = await syncFromClaudeConfig(claudeDir, jeanClaudeDir);
+      const results = await syncFromClaudeConfig(claudeDir, claudeProfilesDir);
 
-      expect(await fs.pathExists(path.join(jeanClaudeDir, 'hooks', 'test.sh'))).toBe(true);
+      expect(await fs.pathExists(path.join(claudeProfilesDir, 'hooks', 'test.sh'))).toBe(true);
     });
   });
 
   describe('syncToClaudeConfig', () => {
-    it('should copy files from jean-claude repo to Claude config', async () => {
+    it('should copy files from claude-profiles repo to Claude config', async () => {
       const claudeDir = path.join(tempDir, '.claude');
-      const jeanClaudeDir = path.join(tempDir, '.jean-claude');
+      const claudeProfilesDir = path.join(tempDir, '.claude-profiles');
 
       await fs.ensureDir(claudeDir);
-      await fs.ensureDir(jeanClaudeDir);
+      await fs.ensureDir(claudeProfilesDir);
 
-      await fs.writeFile(path.join(jeanClaudeDir, 'CLAUDE.md'), '# Remote Instructions');
-      await fs.writeFile(path.join(jeanClaudeDir, 'settings.json'), '{"theme":"light"}');
+      await fs.writeFile(path.join(claudeProfilesDir, 'CLAUDE.md'), '# Remote Instructions');
+      await fs.writeFile(path.join(claudeProfilesDir, 'settings.json'), '{"theme":"light"}');
 
-      const results = await syncToClaudeConfig(jeanClaudeDir, claudeDir);
+      const results = await syncToClaudeConfig(claudeProfilesDir, claudeDir);
 
       expect(await fs.pathExists(path.join(claudeDir, 'CLAUDE.md'))).toBe(true);
       expect(await fs.pathExists(path.join(claudeDir, 'settings.json'))).toBe(true);
@@ -232,14 +232,14 @@ describe('sync.ts', () => {
 
     it('should copy statusline.sh to Claude config', async () => {
       const claudeDir = path.join(tempDir, '.claude');
-      const jeanClaudeDir = path.join(tempDir, '.jean-claude');
+      const claudeProfilesDir = path.join(tempDir, '.claude-profiles');
 
       await fs.ensureDir(claudeDir);
-      await fs.ensureDir(jeanClaudeDir);
+      await fs.ensureDir(claudeProfilesDir);
 
-      await fs.writeFile(path.join(jeanClaudeDir, 'statusline.sh'), '#!/bin/bash\necho "status"');
+      await fs.writeFile(path.join(claudeProfilesDir, 'statusline.sh'), '#!/bin/bash\necho "status"');
 
-      const results = await syncToClaudeConfig(jeanClaudeDir, claudeDir);
+      const results = await syncToClaudeConfig(claudeProfilesDir, claudeDir);
 
       expect(await fs.pathExists(path.join(claudeDir, 'statusline.sh'))).toBe(true);
       const content = await fs.readFile(path.join(claudeDir, 'statusline.sh'), 'utf-8');
@@ -251,15 +251,15 @@ describe('sync.ts', () => {
 
     it('should overwrite existing files', async () => {
       const claudeDir = path.join(tempDir, '.claude');
-      const jeanClaudeDir = path.join(tempDir, '.jean-claude');
+      const claudeProfilesDir = path.join(tempDir, '.claude-profiles');
 
       await fs.ensureDir(claudeDir);
-      await fs.ensureDir(jeanClaudeDir);
+      await fs.ensureDir(claudeProfilesDir);
 
       await fs.writeFile(path.join(claudeDir, 'CLAUDE.md'), '# Old');
-      await fs.writeFile(path.join(jeanClaudeDir, 'CLAUDE.md'), '# New');
+      await fs.writeFile(path.join(claudeProfilesDir, 'CLAUDE.md'), '# New');
 
-      await syncToClaudeConfig(jeanClaudeDir, claudeDir);
+      await syncToClaudeConfig(claudeProfilesDir, claudeDir);
 
       const claudeMd = await fs.readFile(path.join(claudeDir, 'CLAUDE.md'), 'utf-8');
       expect(claudeMd).toBe('# New');

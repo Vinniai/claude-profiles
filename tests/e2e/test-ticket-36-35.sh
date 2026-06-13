@@ -5,7 +5,7 @@
 # #36: First sync push fails on new repo — pull --rebase with no upstream
 # #35: Clone fallback to local init is broken after repo validation change
 #
-# These tests verify that jean-claude handles empty bare repos correctly
+# These tests verify that claude-profiles handles empty bare repos correctly
 # during first-time init and first sync push operations.
 
 # Don't exit on error - we want to see all test results
@@ -25,7 +25,7 @@ TESTS_FAILED=0
 
 # Temporary directories
 TEST_DIR=""
-JEAN_CLAUDE_BIN=""
+CLAUDE_PROFILES_BIN=""
 
 # Per-test environment variables (set by create_test_env)
 TICKET_REMOTE=""
@@ -117,14 +117,14 @@ assert_command_success() {
     fi
 }
 
-# Helper function to run jean-claude commands
-run_jean_claude() {
+# Helper function to run claude-profiles commands
+run_claude_profiles() {
     local machine_dir=$1
     shift
     XDG_CONFIG_HOME="$machine_dir" HOME="$machine_dir" \
     GIT_AUTHOR_NAME="Test User" GIT_AUTHOR_EMAIL="test@example.com" \
     GIT_COMMITTER_NAME="Test User" GIT_COMMITTER_EMAIL="test@example.com" \
-    node "$JEAN_CLAUDE_BIN" "$@"
+    node "$CLAUDE_PROFILES_BIN" "$@"
 }
 
 # Per-test environment helper
@@ -148,7 +148,7 @@ create_test_env() {
             git init > /dev/null 2>&1
             git config user.email "test@example.com"
             git config user.name "Test User"
-            echo '{"version":"2.0.0","managedBy":"jean-claude","lastSync":null,"machineId":"test","platform":"linux","claudeConfigPath":"/test"}' > meta.json
+            echo '{"version":"2.0.0","managedBy":"claude-profiles","lastSync":null,"machineId":"test","platform":"linux","claudeConfigPath":"/test"}' > meta.json
             git add meta.json
             git commit -m "Initial commit" > /dev/null 2>&1
         )
@@ -171,20 +171,20 @@ create_test_env() {
 setup() {
     print_header "Setting up test environment"
 
-    TEST_DIR=$(mktemp -d -t jean-claude-e2e-ticket-36-35.XXXXXX)
+    TEST_DIR=$(mktemp -d -t claude-profiles-e2e-ticket-36-35.XXXXXX)
     print_info "Created test directory: $TEST_DIR"
 
-    # Build jean-claude
-    print_info "Building jean-claude..."
+    # Build claude-profiles
+    print_info "Building claude-profiles..."
     cd "$(dirname "$0")/../.."
     npm run build > /dev/null 2>&1
 
-    JEAN_CLAUDE_BIN="$(pwd)/dist/index.js"
-    if [ ! -f "$JEAN_CLAUDE_BIN" ]; then
-        echo -e "${RED}Error: jean-claude binary not found at $JEAN_CLAUDE_BIN${NC}"
+    CLAUDE_PROFILES_BIN="$(pwd)/dist/index.js"
+    if [ ! -f "$CLAUDE_PROFILES_BIN" ]; then
+        echo -e "${RED}Error: claude-profiles binary not found at $CLAUDE_PROFILES_BIN${NC}"
         exit 1
     fi
-    print_info "Jean-claude binary: $JEAN_CLAUDE_BIN"
+    print_info "claude-profiles binary: $CLAUDE_PROFILES_BIN"
 
     print_success "Test environment setup complete"
 }
@@ -207,7 +207,7 @@ test_ticket_36_first_push_empty_repo() {
     # Step 2: Init with sync pointing at the empty remote
     print_test "Init with empty remote succeeds"
     local init_output
-    init_output=$(run_jean_claude "$TICKET_M1" init --sync --url "$TICKET_REMOTE" 2>&1)
+    init_output=$(run_claude_profiles "$TICKET_M1" init --sync --url "$TICKET_REMOTE" 2>&1)
     local init_exit=$?
     print_info "Init output: $init_output"
 
@@ -223,7 +223,7 @@ test_ticket_36_first_push_empty_repo() {
     # Step 4: Run sync push and capture output
     print_test "Sync push to empty remote succeeds without NETWORK_ERROR"
     local output
-    output=$(run_jean_claude "$TICKET_M1" sync push 2>&1)
+    output=$(run_claude_profiles "$TICKET_M1" sync push 2>&1)
     local exit_code=$?
     print_info "Sync push output: $output"
 
@@ -238,7 +238,7 @@ test_ticket_36_first_push_empty_repo() {
     assert_output_not_contains "$output" "pull --rebase failed"
     assert_output_not_contains "$output" "no tracking information"
 
-    assert_file_exists "$TICKET_M1/.claude/.jean-claude/CLAUDE.md"
+    assert_file_exists "$TICKET_M1/.claude/.claude-profiles/CLAUDE.md"
 
     print_test "Bare repo received commits after push"
     assert_command_success "git --git-dir=\"$TICKET_REMOTE\" log --oneline"
@@ -263,7 +263,7 @@ test_ticket_35_clone_fallback_empty_repo() {
     # Step 2: Run init --sync --url against the empty remote and capture output
     print_test "Init with empty remote handles clone fallback correctly"
     local output
-    output=$(run_jean_claude "$TICKET_M1" init --sync --url "$TICKET_REMOTE" 2>&1)
+    output=$(run_claude_profiles "$TICKET_M1" init --sync --url "$TICKET_REMOTE" 2>&1)
     local exit_code=$?
     print_info "Init output: $output"
 
@@ -274,11 +274,11 @@ test_ticket_35_clone_fallback_empty_repo() {
         print_failure "Init command exited with code $exit_code (expected 0)"
     fi
 
-    assert_dir_exists "$TICKET_M1/.claude/.jean-claude/.git"
+    assert_dir_exists "$TICKET_M1/.claude/.claude-profiles/.git"
 
     print_test "Remote origin is correctly configured"
     local remote_url
-    remote_url=$(git -C "$TICKET_M1/.claude/.jean-claude" remote get-url origin 2>&1)
+    remote_url=$(git -C "$TICKET_M1/.claude/.claude-profiles" remote get-url origin 2>&1)
     local remote_exit=$?
     if [ $remote_exit -eq 0 ]; then
         print_success "Remote origin URL: $remote_url"
@@ -293,8 +293,8 @@ test_ticket_35_clone_fallback_empty_repo() {
     fi
 
     print_test "meta.json exists and contains managedBy"
-    assert_file_exists "$TICKET_M1/.claude/.jean-claude/meta.json"
-    assert_file_contains "$TICKET_M1/.claude/.jean-claude/meta.json" "managedBy"
+    assert_file_exists "$TICKET_M1/.claude/.claude-profiles/meta.json"
+    assert_file_contains "$TICKET_M1/.claude/.claude-profiles/meta.json" "managedBy"
 
     print_test "No error messages about remote origin already exists"
     assert_output_not_contains "$output" "remote origin already exists"

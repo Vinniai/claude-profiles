@@ -27,7 +27,7 @@ describe('profiles.ts', () => {
   let claudeProfilesDir: string;
 
   beforeEach(async () => {
-    tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'jean-claude-test-'));
+    tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'claude-profiles-test-'));
     claudeConfigDir = path.join(tempDir, '.claude');
     claudeProfilesDir = path.join(tempDir, '.claude-profiles');
 

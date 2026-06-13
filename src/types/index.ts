@@ -1,9 +1,8 @@
 /**
  * Base error type for all claude-profiles failures.
  *
- * The project was renamed from `jean-claude` to `claude-profiles`, so
- * `ClaudeProfilesError` is the canonical name; `JeanClaudeError` is kept as a
- * deprecated alias so existing imports keep working.
+ * The project was renamed from `jean-claude` to `claude-profiles`.
+ * `ClaudeProfilesError` is the canonical name; all code must use it.
  */
 export class ClaudeProfilesError extends Error {
   constructor(
@@ -15,9 +14,6 @@ export class ClaudeProfilesError extends Error {
     this.name = 'ClaudeProfilesError';
   }
 }
-
-/** @deprecated Use `ClaudeProfilesError` instead. */
-export const JeanClaudeError = ClaudeProfilesError;
 
 export enum ErrorCode {
   NOT_INITIALIZED = 'NOT_INITIALIZED',
@@ -39,9 +35,8 @@ export enum ErrorCode {
 
 export interface ConfigPaths {
   // Storage dir for claude-profiles state (profiles.json, state.json, sync repo).
-  // Field name kept for backwards compatibility; the on-disk location is now
-  // `<claude>/.claude-profiles` (migrated from the legacy `.jean-claude`).
-  jeanClaudeDir: string;
+  // On-disk location: `<claude>/.claude-profiles` (migrated from legacy `.jean-claude`).
+  claudeProfilesDir: string;
   claudeConfigDir: string;
   platform: 'darwin' | 'linux';
 }
@@ -86,6 +81,31 @@ export interface DoctorCheck {
   suggestion?: string;
 }
 
+/**
+ * Anthropic subscription tiers we understand, ordered by capacity. The values
+ * mirror Anthropic's own "×" multipliers relative to a Pro baseline, so they
+ * double as the default routing weight for an account on that plan.
+ */
+export type PlanTier = 'pro' | 'max-5x' | 'max-20x';
+
+export const PLAN_TIERS: readonly PlanTier[] = ['pro', 'max-5x', 'max-20x'] as const;
+
+/** Relative capacity multiplier per plan (Pro = 1× baseline). */
+export const PLAN_CAPACITY: Record<PlanTier, number> = {
+  pro: 1,
+  'max-5x': 5,
+  'max-20x': 20,
+};
+
+/**
+ * Capacity multiplier for a profile's plan, defaulting to 1 (Pro baseline) when
+ * the plan is unknown. Used as the default `weighted` weight and to scale
+ * `most-remaining` into absolute headroom.
+ */
+export function planCapacity(plan?: PlanTier): number {
+  return plan ? PLAN_CAPACITY[plan] : 1;
+}
+
 export interface Profile {
   alias: string;
   configDir: string;
@@ -93,12 +113,160 @@ export interface Profile {
   description?: string;
   /** Lower numbers are tried first when no explicit chain order is given. */
   priority?: number;
+  /**
+   * Per-profile routing eligibility gates. When present these override the
+   * chain/global policy for this profile (e.g. "never spend this account below
+   * 20% of its weekly budget").
+   */
+  policy?: RoutingPolicy;
+  /**
+   * Relative weight for the `weighted` strategy (default 1). Higher weight =
+   * picked proportionally more often when several profiles are eligible.
+   * When unset, the weight falls back to the account's {@link plan} capacity.
+   */
+  weight?: number;
+  /**
+   * Anthropic subscription tier for this account. Feeds two routing decisions
+   * automatically: the default `weighted` share (a `max-20x` gets ~4× a
+   * `max-5x`), the absolute headroom compared by `most-remaining`, and the
+   * implicit "big-first" order when no explicit `priority` is set.
+   */
+  plan?: PlanTier;
 }
 
 export interface ProfileConfig {
   profiles: Record<string, Profile>;
   /** Named, ordered fallback chains. Each value is a list of profile names. */
   chains?: Record<string, string[]>;
+  /** Default routing strategy + eligibility policy applied to every chain. */
+  routing?: RoutingConfig;
+  /** Per-chain routing overrides, keyed by chain name (wins over `routing`). */
+  chainRouting?: Record<string, RoutingConfig>;
+}
+
+/**
+ * How candidates are ordered once the ineligible ones have been filtered out.
+ *
+ * - `priority`      — chain order as written (the classic failover behaviour).
+ * - `round-robin`   — least-recently-used first, so load spreads evenly.
+ * - `least-used`    — lowest session usage % first (drains the freshest account).
+ * - `most-remaining`— most session budget/time remaining first.
+ * - `weighted`      — random pick biased by each profile's `weight`.
+ */
+export type RoutingStrategy =
+  | 'priority'
+  | 'round-robin'
+  | 'least-used'
+  | 'most-remaining'
+  | 'weighted';
+
+export const ROUTING_STRATEGIES: readonly RoutingStrategy[] = [
+  'priority',
+  'round-robin',
+  'least-used',
+  'most-remaining',
+  'weighted',
+] as const;
+
+/**
+ * Eligibility gates evaluated against a profile's {@link UsageBudget} before it
+ * can be selected. A profile failing any gate is moved to the back of the line
+ * (never hard-dropped — a chain must always be able to run something).
+ */
+export interface RoutingPolicy {
+  /** Require at least this percent of the WEEKLY budget remaining (0–100). */
+  minWeeklyRemaining?: number;
+  /** Require at least this percent of the SESSION budget remaining (0–100). */
+  minSessionRemaining?: number;
+  /**
+   * Skip a profile whose session window resets within this many minutes — avoid
+   * starting work on an account that's about to be cut off.
+   */
+  avoidIfWindowEndsWithinMin?: number;
+  /**
+   * Prefer a profile whose session window resets within this many minutes — use
+   * up a soon-to-reset budget before it's wasted. Applied as an ordering boost.
+   */
+  preferIfWindowEndsWithinMin?: number;
+}
+
+export interface RoutingConfig {
+  strategy?: RoutingStrategy;
+  policy?: RoutingPolicy;
+}
+
+/**
+ * Why work moved (or started) on an account. We separate **deliberate** moves
+ * (`manual` — a user/Claude chose to switch via the channel/`switch_account`)
+ * from **automatic** routing failovers (`limit`/`auth`/`server` — triggered by
+ * the Claude CLI returning an error). `launch` is the initial strategy-driven
+ * selection; `exhausted` means no account was left to try.
+ */
+export type RoutingEventKind =
+  | 'launch'
+  | 'manual'
+  | 'limit'
+  | 'auth'
+  | 'server'
+  | 'exhausted';
+
+export const ROUTING_EVENT_KINDS: readonly RoutingEventKind[] = [
+  'launch',
+  'manual',
+  'limit',
+  'auth',
+  'server',
+  'exhausted',
+] as const;
+
+/** High-level category used to label events in the UI. */
+export type RoutingCategory = 'launch' | 'deliberate' | 'auto-failover' | 'exhausted';
+
+/**
+ * One entry in the persisted routing log — the time-series of how work has been
+ * routed across accounts. Survives `chain reset` and process boundaries so the
+ * history can be recalled across sessions.
+ */
+export interface RoutingEvent {
+  /** ISO timestamp of the event. */
+  at: string;
+  kind: RoutingEventKind;
+  /** Chain this routing happened on (omitted for single-profile runs). */
+  chain?: string;
+  /** Account work moved off (null/omitted on an initial launch). */
+  from?: string | null;
+  /** Account work moved to (null when exhausted). */
+  to?: string | null;
+  /** Launch/headless/interactive mode this happened in. */
+  mode?: 'interactive' | 'headless';
+  /** Strategy that drove the selection (mainly for `launch`). */
+  strategy?: RoutingStrategy;
+  /** Human-readable detail (the CLI error, or the manual reason). */
+  reason?: string;
+}
+
+/**
+ * A single rolling usage window. Claude Max enforces a short (~5h) session
+ * window and a longer weekly window; we track both per profile. All fields are
+ * optional/best-effort — the Claude CLI does not always surface them.
+ */
+export interface UsageWindow {
+  /** Percent of this window's budget already consumed (0–100), if known. */
+  usedPct?: number;
+  /** ISO timestamp when this window resets. */
+  resetAt?: string;
+  /** ISO timestamp this observation was recorded (for staleness checks). */
+  observedAt?: string;
+  /** Where the figure came from: parsed from CLI output, or set by the user. */
+  source?: 'observed' | 'manual';
+}
+
+/** Per-profile usage budget across both windows. */
+export interface UsageBudget {
+  /** The short, rolling session window (~5h on Max). */
+  session?: UsageWindow;
+  /** The weekly window. */
+  weekly?: UsageWindow;
 }
 
 /**
@@ -114,6 +282,19 @@ export interface ProfileRuntimeState {
   lastErrorAt?: string;
   /** True when the profile's OAuth login is expired/missing and needs re-auth. */
   needsAuth?: boolean;
+  /**
+   * Why this profile was last put into cooldown / flagged — lets the status UI
+   * label a "manual switch" differently from an automatic "limit/auth/server"
+   * failover.
+   */
+  lastEventKind?: RoutingEventKind;
+  /**
+   * Last known usage budget (session + weekly windows) for this profile, used by
+   * the strategic router. Best-effort: populated from CLI output or `usage set`.
+   */
+  usage?: UsageBudget;
+  /** ISO timestamp this profile was last selected — drives `round-robin`. */
+  lastUsedAt?: string;
 }
 
 export interface RuntimeStateFile {

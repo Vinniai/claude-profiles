@@ -2,9 +2,14 @@ import { spawn } from 'child_process';
 import {
   ClaudeProfilesError,
   ErrorCode,
+  planCapacity,
   type Profile,
   type ProfileConfig,
+  type RoutingEventKind,
+  type RoutingPolicy,
+  type RoutingStrategy,
   type RuntimeStateFile,
+  type UsageBudget,
 } from '../types/index.js';
 import {
   classifyOutcome,
@@ -18,6 +23,11 @@ import {
   markNeedsAuth,
   setProfileCooldown,
 } from './state.js';
+import {
+  applyRouting,
+  resolveStrategy,
+  type RoutableCandidate,
+} from './strategy.js';
 
 /** Cooldown applied when no explicit reset time is available. */
 export const RATE_LIMIT_COOLDOWN_MS = 60 * 60 * 1000; // 1 hour
@@ -74,6 +84,25 @@ export interface Candidate {
   name: string;
   profile: Profile;
   healthy: boolean;
+  /** Last-known usage budget, surfaced for the transition/status UI. */
+  usage?: UsageBudget;
+}
+
+/**
+ * Merge the effective routing policy for a profile: global config policy, then
+ * the per-chain policy, then the profile's own policy (most specific wins).
+ */
+export function effectivePolicy(
+  config: ProfileConfig,
+  chainName: string | undefined,
+  profileName: string
+): RoutingPolicy | undefined {
+  const merged: RoutingPolicy = {
+    ...config.routing?.policy,
+    ...(chainName ? config.chainRouting?.[chainName]?.policy : undefined),
+    ...config.profiles[profileName]?.policy,
+  };
+  return Object.keys(merged).length > 0 ? merged : undefined;
 }
 
 /**
@@ -82,7 +111,7 @@ export interface Candidate {
  */
 export function resolveProfileNames(
   config: ProfileConfig,
-  opts: { chain?: string; profile?: string }
+  opts: { chain?: string; profile?: string; profiles?: string[] }
 ): string[] {
   if (opts.profile) {
     if (!config.profiles[opts.profile]) {
@@ -93,6 +122,20 @@ export function resolveProfileNames(
       );
     }
     return [opts.profile];
+  }
+
+  // Ad-hoc, ordered chain assembled on the command line (no saved chain). Every
+  // name must exist; an unknown one is a typo we should surface, not swallow.
+  if (opts.profiles && opts.profiles.length > 0) {
+    const unknown = opts.profiles.filter((n) => !config.profiles[n]);
+    if (unknown.length > 0) {
+      throw new ClaudeProfilesError(
+        `Unknown profile${unknown.length > 1 ? 's' : ''}: ${unknown.join(', ')}`,
+        ErrorCode.NOT_INITIALIZED,
+        `Use 'claude-profiles profile list' to see existing profiles.`
+      );
+    }
+    return [...opts.profiles];
   }
 
   if (opts.chain) {
@@ -108,16 +151,24 @@ export function resolveProfileNames(
   }
 
   // No explicit selection: prefer a chain literally named "default", else all
-  // profiles ordered by ascending priority (undefined sorts last), then name.
+  // profiles in implicit order. Explicit `priority` wins; otherwise we fall back
+  // to "big-first" (highest plan capacity first), so the account with the most
+  // headroom leads and the smallest plan becomes the last-resort backstop.
   const defaultChain = config.chains?.default;
   if (defaultChain && defaultChain.length > 0) {
     return defaultChain.filter((n) => config.profiles[n]);
   }
 
+  const sortKey = (name: string): number => {
+    const p = config.profiles[name];
+    // Explicit priority (small = first) wins; otherwise derive from capacity so
+    // a higher-capacity plan sorts earlier (20× → 980, 5× → 995, pro → 999).
+    return p.priority ?? 1000 - planCapacity(p.plan);
+  };
   return Object.keys(config.profiles).sort((a, b) => {
-    const pa = config.profiles[a].priority ?? Number.MAX_SAFE_INTEGER;
-    const pb = config.profiles[b].priority ?? Number.MAX_SAFE_INTEGER;
-    return pa === pb ? a.localeCompare(b) : pa - pb;
+    const ka = sortKey(a);
+    const kb = sortKey(b);
+    return ka === kb ? a.localeCompare(b) : ka - kb;
   });
 }
 
@@ -167,7 +218,7 @@ async function recordFailure(
       outcome.resetAt && outcome.resetAt.getTime() > now.getTime()
         ? outcome.resetAt
         : new Date(now.getTime() + RATE_LIMIT_COOLDOWN_MS);
-    await setProfileCooldown(name, until, outcome.reason, now);
+    await setProfileCooldown(name, until, outcome.reason, now, 'limit');
     return;
   }
   if (outcome.kind === 'server_error') {
@@ -175,7 +226,8 @@ async function recordFailure(
       name,
       new Date(now.getTime() + SERVER_ERROR_COOLDOWN_MS),
       outcome.reason,
-      now
+      now,
+      'server'
     );
   }
 }
@@ -199,8 +251,21 @@ export interface RunWithFallbackOptions {
   claudeArgs: string[];
   spawnImpl?: CaptureSpawn;
   onAttempt?: (name: string, index: number, total: number) => void;
-  onFallback?: (name: string, reason: string, next: string | null) => void;
+  onFallback?: (
+    name: string,
+    reason: string,
+    next: string | null,
+    kind: RoutingEventKind
+  ) => void;
   now?: () => Date;
+}
+
+/** Map a failure classification to the routing-log event kind. */
+export function failureEventKind(kind: ClaudeOutcome['kind']): RoutingEventKind {
+  if (kind === 'rate_limit') return 'limit';
+  if (kind === 'server_error') return 'server';
+  if (kind === 'auth') return 'auth';
+  return 'limit';
 }
 
 /**
@@ -251,7 +316,7 @@ export async function runWithFallback(
     if (shouldFailover(outcome.kind)) {
       await recordFailure(c.name, outcome, now());
       const next = candidates[i + 1]?.name ?? null;
-      onFallback?.(c.name, outcome.reason, next);
+      onFallback?.(c.name, outcome.reason, next, failureEventKind(outcome.kind));
       continue;
     }
 
@@ -334,7 +399,12 @@ export interface InteractiveFailoverOptions {
     env: NodeJS.ProcessEnv
   ) => Promise<number>;
   onLaunch?: (name: string, healthy: boolean) => void;
-  onRelaunch?: (from: string, to: string) => void;
+  onRelaunch?: (
+    from: string,
+    to: string,
+    kind: RoutingEventKind,
+    reason?: string
+  ) => void;
   now?: () => Date;
 }
 
@@ -408,20 +478,151 @@ export async function runInteractiveWithFailover(
     // not-yet-tried candidate (context is restored by the SessionStart hook).
     const next = candidates.find((c) => !tried.has(c.name) && c.healthy);
     if (!next) break;
-    onRelaunch?.(current.name, next.name);
+    // Surface *why* it was retired so the caller can label the move (a manual
+    // switch reads differently from an automatic limit/auth/server failover).
+    const st = await loadState();
+    const retired = st.profiles[current.name];
+    onRelaunch?.(
+      current.name,
+      next.name,
+      retired?.lastEventKind ?? 'limit',
+      retired?.lastError
+    );
     current = next;
   }
 
   return { lastProfile: path[path.length - 1], exitCode, path };
 }
 
-/** Load config + state and produce the ordered candidate list in one step. */
+export interface DeferredCandidate {
+  name: string;
+  reasons: string[];
+}
+
+export interface BuildCandidatesResult {
+  candidates: Candidate[];
+  /** Healthy profiles pushed to the back because they failed a policy gate. */
+  deferred: DeferredCandidate[];
+  /** The routing strategy that ordered the healthy group. */
+  strategy: RoutingStrategy;
+}
+
+/**
+ * Load config + state and produce the ordered candidate list, applying the
+ * configured routing strategy and eligibility policy.
+ *
+ * Ordering: the *healthy* group is ordered by the strategy (priority by
+ * default), with policy-deferred profiles moved to the back of that group;
+ * cooled-down / needs-auth profiles always come last, soonest-available first
+ * (a limit may have reset). Nothing is ever dropped — a chain must always be
+ * runnable.
+ */
+export interface BuildCandidatesOptions {
+  chain?: string;
+  profile?: string;
+  /** Ad-hoc, ordered profile list assembled on the CLI (no saved chain). */
+  profiles?: string[];
+  /** Per-profile weight overrides (e.g. parsed from `josh:3 lockie:1`). */
+  weights?: Record<string, number>;
+  /** One-shot strategy override (a `--balanced`/`--weighted` flag), beats config. */
+  strategyOverride?: RoutingStrategy;
+  /** One-shot policy gates merged on top of the configured policy. */
+  policyOverride?: RoutingPolicy;
+  /**
+   * Pin this profile to the front of the healthy group if it is healthy —
+   * "sticky session": a continuation stays on the account it started on
+   * (surviving compaction) regardless of the load-spreading strategy.
+   */
+  stickTo?: string;
+}
+
 export async function buildCandidates(
   config: ProfileConfig,
-  opts: { chain?: string; profile?: string },
+  opts: BuildCandidatesOptions,
   now: Date = new Date()
-): Promise<Candidate[]> {
+): Promise<BuildCandidatesResult> {
   const names = resolveProfileNames(config, opts);
   const state = await loadState();
-  return orderCandidates(names, config, state, now);
+
+  const resolved = resolveStrategy(
+    config.routing,
+    opts.chain ? config.chainRouting?.[opts.chain] : undefined
+  );
+  const strategy = opts.strategyOverride ?? resolved.strategy;
+
+  const mergePolicy = (base?: RoutingPolicy): RoutingPolicy | undefined => {
+    const merged = { ...base, ...opts.policyOverride };
+    return Object.keys(merged).length > 0 ? merged : undefined;
+  };
+
+  const annotated = names
+    .filter((n) => config.profiles[n])
+    .map((name, index) => {
+      const s = state.profiles[name];
+      const p = config.profiles[name];
+      return {
+        name,
+        profile: p,
+        healthy: isHealthy(s, now),
+        usage: s?.usage,
+        lastUsedAt: s?.lastUsedAt,
+        weight: opts.weights?.[name] ?? p.weight,
+        capacity: planCapacity(p.plan),
+        policy: mergePolicy(effectivePolicy(config, opts.chain, name)),
+        priorityIndex: index,
+      };
+    });
+
+  const byName = new Map(annotated.map((a) => [a.name, a]));
+  const toCandidate = (name: string): Candidate => {
+    const a = byName.get(name)!;
+    return { name: a.name, profile: a.profile, healthy: a.healthy, usage: a.usage };
+  };
+
+  // Strategy + eligibility govern only the healthy group; cooled profiles keep
+  // their soonest-availability ordering as a reliable last resort.
+  const healthyRoutable: RoutableCandidate[] = annotated
+    .filter((a) => a.healthy)
+    .map((a) => ({
+      name: a.name,
+      healthy: true,
+      priorityIndex: a.priorityIndex,
+      weight: a.weight,
+      capacity: a.capacity,
+      usage: a.usage,
+      lastUsedAt: a.lastUsedAt,
+      policy: a.policy,
+    }));
+
+  const { ordered: routed, deferred } = applyRouting({
+    candidates: healthyRoutable,
+    strategy,
+    now,
+  });
+
+  // Sticky session: if the profile we're continuing on is still healthy, pin it
+  // to the front so a mid-session strategy (round-robin/weighted) can't drag the
+  // conversation onto a different account and lose context.
+  const ordered =
+    opts.stickTo && routed.some((r) => r.name === opts.stickTo)
+      ? [
+          ...routed.filter((r) => r.name === opts.stickTo),
+          ...routed.filter((r) => r.name !== opts.stickTo),
+        ]
+      : routed;
+
+  const cooled = annotated
+    .filter((a) => !a.healthy)
+    .sort((x, y) => {
+      const rx = cooldownRemainingMs(state.profiles[x.name], now) ?? Infinity;
+      const ry = cooldownRemainingMs(state.profiles[y.name], now) ?? Infinity;
+      return rx - ry;
+    });
+
+  const candidates: Candidate[] = [
+    ...ordered.map((r) => toCandidate(r.name)),
+    ...cooled.map((a) => toCandidate(a.name)),
+  ];
+
+  return { candidates, deferred, strategy };
 }

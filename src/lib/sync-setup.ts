@@ -5,34 +5,35 @@ import { logger } from '../utils/logger.js';
 import { confirm, input } from '../utils/prompts.js';
 import { isGitRepo, createGit, initRepo, addRemote, testRemoteConnection, cloneRepo } from './git.js';
 import { readMetaJson } from './sync.js';
-import { JeanClaudeError, ErrorCode } from '../types/index.js';
+import { ClaudeProfilesError, ErrorCode } from '../types/index.js';
 
-async function warnIfNotJeanClaudeRepo(dir: string): Promise<void> {
+async function warnIfNotClaudeProfilesRepo(dir: string): Promise<void> {
   const meta = await readMetaJson(dir);
-  if (meta?.managedBy === 'jean-claude') return;
+  // Accept both the new value and the legacy 'jean-claude' value (back-compat)
+  if (meta?.managedBy === 'claude-profiles' || meta?.managedBy === 'jean-claude') return;
 
-  logger.warn('This repository does not appear to be a Jean-Claude config repo.');
+  logger.warn('This repository does not appear to be a claude-profiles config repo.');
   logger.dim('It may overwrite your Claude Code configuration with unrelated files.');
   const proceed = await confirm('Continue anyway?', false);
   if (!proceed) {
-    throw new JeanClaudeError(
+    throw new ClaudeProfilesError(
       'Setup cancelled — repository validation failed',
       ErrorCode.INVALID_CONFIG,
-      'Use a repository created by "jean-claude init" with syncing enabled.'
+      'Use a repository created by "claude-profiles init" with syncing enabled.'
     );
   }
 }
 
 /**
  * Interactive Git remote setup flow.
- * Used by both `jean-claude init` (when user opts in) and `jean-claude sync setup`.
+ * Used by both `claude-profiles init` (when user opts in) and `claude-profiles sync setup`.
  */
-export async function setupGitSync(jeanClaudeDir: string, urlArg?: string): Promise<void> {
-  const isRepo = await isGitRepo(jeanClaudeDir);
+export async function setupGitSync(claudeProfilesDir: string, urlArg?: string): Promise<void> {
+  const isRepo = await isGitRepo(claudeProfilesDir);
 
   if (isRepo) {
     // Already a git repo — check if remote is configured
-    const git = createGit(jeanClaudeDir);
+    const git = createGit(claudeProfilesDir);
     const remotes = await git.getRemotes(true);
     if (remotes.length > 0) {
       const origin = remotes.find(r => r.name === 'origin');
@@ -68,7 +69,7 @@ export async function setupGitSync(jeanClaudeDir: string, urlArg?: string): Prom
   }
 
   if (!repoUrl.trim()) {
-    throw new JeanClaudeError(
+    throw new ClaudeProfilesError(
       'No repository URL provided',
       ErrorCode.INVALID_CONFIG,
       'Provide a Git repository URL (e.g. git@github.com:user/repo.git).'
@@ -79,7 +80,7 @@ export async function setupGitSync(jeanClaudeDir: string, urlArg?: string): Prom
   logger.step(1, 2, 'Testing connection to repository...');
   const canConnect = await testRemoteConnection(repoUrl);
   if (!canConnect) {
-    throw new JeanClaudeError(
+    throw new ClaudeProfilesError(
       'Cannot connect to repository',
       ErrorCode.NETWORK_ERROR,
       'Check that the URL is correct and you have access.'
@@ -92,52 +93,52 @@ export async function setupGitSync(jeanClaudeDir: string, urlArg?: string): Prom
 
   if (isRepo) {
     // Already a git repo but no remote — just add the remote
-    await addRemote(jeanClaudeDir, repoUrl);
+    await addRemote(claudeProfilesDir, repoUrl);
     logger.success('Remote added to existing repository');
   } else {
     // Not a git repo — need to set up git
-    const dirContents = await fs.readdir(jeanClaudeDir);
+    const dirContents = await fs.readdir(claudeProfilesDir);
 
     if (dirContents.length === 0) {
       // Empty directory — clone directly
       try {
-        await cloneRepo(repoUrl, jeanClaudeDir);
-        const cloneGit = createGit(jeanClaudeDir);
+        await cloneRepo(repoUrl, claudeProfilesDir);
+        const cloneGit = createGit(claudeProfilesDir);
         const hasCommits = await cloneGit.log().then(log => log.total > 0).catch(() => false);
         if (hasCommits) {
-          await warnIfNotJeanClaudeRepo(jeanClaudeDir);
+          await warnIfNotClaudeProfilesRepo(claudeProfilesDir);
           logger.success('Cloned existing config from repository');
         } else {
           logger.success('Initialized new repository');
         }
       } catch (error) {
-        if (error instanceof JeanClaudeError && error.code !== ErrorCode.CLONE_FAILED) throw error;
-        await initRepo(jeanClaudeDir);
-        await addRemote(jeanClaudeDir, repoUrl);
+        if (error instanceof ClaudeProfilesError && error.code !== ErrorCode.CLONE_FAILED) throw error;
+        await initRepo(claudeProfilesDir);
+        await addRemote(claudeProfilesDir, repoUrl);
         logger.success('Initialized new repository');
       }
     } else {
       // Non-empty directory (e.g. has meta.json) — clone to temp, move .git over
-      const tmpDir = path.join(os.tmpdir(), `jean-claude-clone-${Date.now()}`);
+      const tmpDir = path.join(os.tmpdir(), `claude-profiles-clone-${Date.now()}`);
       try {
         await cloneRepo(repoUrl, tmpDir);
         const tmpGit = createGit(tmpDir);
         const hasCommits = await tmpGit.log().then(log => log.total > 0).catch(() => false);
         if (hasCommits) {
-          await warnIfNotJeanClaudeRepo(tmpDir);
-          await fs.move(path.join(tmpDir, '.git'), path.join(jeanClaudeDir, '.git'));
-          const git = createGit(jeanClaudeDir);
+          await warnIfNotClaudeProfilesRepo(tmpDir);
+          await fs.move(path.join(tmpDir, '.git'), path.join(claudeProfilesDir, '.git'));
+          const git = createGit(claudeProfilesDir);
           await git.reset(['HEAD']);
           logger.success('Cloned existing config from repository');
         } else {
           // Empty remote — take the .git (has origin configured), skip reset
-          await fs.move(path.join(tmpDir, '.git'), path.join(jeanClaudeDir, '.git'));
+          await fs.move(path.join(tmpDir, '.git'), path.join(claudeProfilesDir, '.git'));
           logger.success('Initialized new repository');
         }
       } catch (error) {
-        if (error instanceof JeanClaudeError && error.code !== ErrorCode.CLONE_FAILED) throw error;
-        await initRepo(jeanClaudeDir);
-        await addRemote(jeanClaudeDir, repoUrl);
+        if (error instanceof ClaudeProfilesError && error.code !== ErrorCode.CLONE_FAILED) throw error;
+        await initRepo(claudeProfilesDir);
+        await addRemote(claudeProfilesDir, repoUrl);
         logger.success('Initialized new repository');
       } finally {
         await fs.remove(tmpDir);

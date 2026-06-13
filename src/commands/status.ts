@@ -3,12 +3,12 @@ import chalk from 'chalk';
 import { handleSyncStatus } from './sync.js';
 
 const cmd = new Command('status')
-  .description('(deprecated) Use "jean-claude sync status" instead')
+  .description('(deprecated) Use "claude-profiles sync status" instead')
   .action(async () => {
     console.error(
       chalk.yellow('Warning:') +
-      ' "jean-claude status" is deprecated. Use ' +
-      chalk.cyan('jean-claude sync status') +
+      ' "claude-profiles status" is deprecated. Use ' +
+      chalk.cyan('claude-profiles sync status') +
       ' instead.'
     );
     console.error('');

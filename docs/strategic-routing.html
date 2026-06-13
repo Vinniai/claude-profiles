@@ -1,0 +1,338 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>claude-profiles — Strategic Routing &amp; Live Transitions</title>
+<style>
+  :root{
+    --bg:#0e0f12; --bg2:#15171c; --bg3:#1b1e24; --line:#2a2e37;
+    --fg:#e7e9ee; --dim:#9aa1ad; --faint:#6b7280;
+    --accent:#FF6B4A; --accent2:#ffb199;
+    --green:#4ade80; --yellow:#fbbf24; --red:#f87171; --cyan:#5eead4; --blue:#7dd3fc;
+    --mono:"SF Mono",ui-monospace,"JetBrains Mono",Menlo,Consolas,monospace;
+    --sans:-apple-system,BlinkMacSystemFont,"Segoe UI",Inter,Roboto,sans-serif;
+  }
+  *{box-sizing:border-box}
+  html{scroll-behavior:smooth}
+  body{margin:0;background:radial-gradient(1200px 600px at 80% -10%,#241b18 0,var(--bg) 55%);color:var(--fg);font-family:var(--sans);line-height:1.6;-webkit-font-smoothing:antialiased}
+  a{color:var(--accent2);text-decoration:none}
+  .wrap{max-width:980px;margin:0 auto;padding:0 22px}
+  code,kbd{font-family:var(--mono)}
+
+  /* hero */
+  header.hero{padding:74px 0 40px;border-bottom:1px solid var(--line)}
+  .badge{display:inline-block;font-family:var(--mono);font-size:12px;letter-spacing:.12em;text-transform:uppercase;color:var(--accent);border:1px solid #3a2a24;background:#1c1512;border-radius:999px;padding:5px 12px;margin-bottom:20px}
+  h1{font-size:46px;line-height:1.08;margin:0 0 14px;letter-spacing:-.02em}
+  h1 .grad{background:linear-gradient(92deg,var(--accent),#ffd0a8);-webkit-background-clip:text;background-clip:text;color:transparent}
+  .lede{font-size:19px;color:var(--dim);max-width:720px;margin:0}
+  .metarow{display:flex;gap:10px;flex-wrap:wrap;margin-top:26px}
+  .chip{font-family:var(--mono);font-size:12.5px;color:var(--dim);background:var(--bg2);border:1px solid var(--line);border-radius:8px;padding:7px 11px}
+  .chip b{color:var(--fg)}
+
+  section{padding:52px 0;border-bottom:1px solid var(--line)}
+  h2{font-size:13px;letter-spacing:.16em;text-transform:uppercase;color:var(--accent);margin:0 0 8px;font-family:var(--mono)}
+  .h2sub{font-size:27px;margin:0 0 26px;letter-spacing:-.01em}
+  p.note{color:var(--dim);max-width:760px}
+
+  /* feature grid */
+  .grid{display:grid;grid-template-columns:repeat(3,1fr);gap:16px}
+  @media(max-width:760px){.grid{grid-template-columns:1fr}}
+  .card{background:linear-gradient(180deg,var(--bg2),var(--bg));border:1px solid var(--line);border-radius:14px;padding:20px}
+  .card .n{font-family:var(--mono);font-size:12px;color:var(--accent);border:1px solid #3a2a24;border-radius:7px;padding:2px 8px;display:inline-block;margin-bottom:12px}
+  .card h3{margin:0 0 8px;font-size:18px}
+  .card p{margin:0;color:var(--dim);font-size:14.5px}
+
+  /* terminal */
+  .term{background:#0a0b0e;border:1px solid var(--line);border-radius:12px;overflow:hidden;box-shadow:0 20px 50px -28px #000;margin:18px 0}
+  .term .bar{display:flex;align-items:center;gap:7px;padding:10px 14px;border-bottom:1px solid var(--line);background:#101216}
+  .term .bar i{width:11px;height:11px;border-radius:50%;display:inline-block}
+  .d-r{background:#ff5f56}.d-y{background:#ffbd2e}.d-g{background:#27c93f}
+  .term .title{margin-left:8px;font-family:var(--mono);font-size:12px;color:var(--faint)}
+  .term pre{margin:0;padding:18px 18px;font-family:var(--mono);font-size:13px;line-height:1.5;overflow-x:auto;color:#d6d9e0;white-space:pre}
+  .o{color:var(--accent)}.g{color:var(--green)}.y{color:var(--yellow)}.r{color:var(--red)}
+  .c{color:var(--cyan)}.b{color:var(--blue)}.dm{color:var(--faint)}.bd{color:#fff;font-weight:600}
+  .prompt{color:var(--accent)}
+
+  /* tables */
+  table{width:100%;border-collapse:collapse;font-size:14.5px;margin-top:6px}
+  th,td{text-align:left;padding:11px 12px;border-bottom:1px solid var(--line);vertical-align:top}
+  th{font-family:var(--mono);font-size:11.5px;letter-spacing:.06em;text-transform:uppercase;color:var(--faint);font-weight:600}
+  td code{color:var(--accent2);background:var(--bg3);padding:2px 6px;border-radius:5px;font-size:13px}
+  tr:last-child td{border-bottom:none}
+  .strat{color:var(--cyan);font-family:var(--mono);font-weight:600}
+
+  /* example split */
+  .split{display:grid;grid-template-columns:1fr 1fr;gap:18px}
+  @media(max-width:760px){.split{grid-template-columns:1fr}}
+  .panel{background:var(--bg2);border:1px solid var(--line);border-radius:12px;padding:18px}
+  .panel h4{margin:0 0 12px;font-size:14px;color:var(--accent);font-family:var(--mono);letter-spacing:.04em}
+  .step{display:flex;gap:12px;margin:0 0 14px}
+  .step .num{flex:0 0 24px;height:24px;border-radius:50%;background:#1c1512;border:1px solid #3a2a24;color:var(--accent);font-family:var(--mono);font-size:12px;display:grid;place-items:center;margin-top:2px}
+  .step .t{font-size:14.5px;color:var(--fg)}
+  .step .t b{color:var(--fg)} .step .t span{color:var(--dim)}
+
+  .kv{font-family:var(--mono);font-size:13px;line-height:1.9}
+  .kv .k{color:var(--faint)} .kv .v{color:var(--fg)}
+
+  footer{padding:40px 0 70px;color:var(--faint);font-size:14px}
+  .pill{display:inline-block;font-family:var(--mono);font-size:12px;color:var(--green);border:1px solid #1f3a2a;background:#0f1a14;border-radius:999px;padding:4px 11px}
+
+  /* shared doc nav */
+  .docnav{position:sticky;top:0;z-index:50;background:rgba(14,15,18,.82);backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);border-bottom:1px solid var(--line)}
+  .docnav .wrap{display:flex;align-items:center;justify-content:space-between;gap:14px;padding-top:13px;padding-bottom:13px}
+  .docnav .brand{display:flex;align-items:center;gap:8px;font-family:var(--mono);font-weight:600;color:var(--fg)}
+  .docnav .brand .d{width:9px;height:9px;border-radius:50%;background:var(--accent);box-shadow:0 0 10px var(--accent)}
+  .docnav .links{display:flex;gap:20px;flex-wrap:wrap}
+  .docnav .links a{color:var(--dim);font-size:13.5px;font-weight:500}
+  .docnav .links a:hover{color:var(--fg)}
+  .docnav .links a.here{color:var(--accent)}
+  @media(max-width:640px){.docnav .links{display:none}}
+</style>
+</head>
+<body>
+
+<nav class="docnav"><div class="wrap">
+  <a class="brand" href="showcase.html"><span class="d"></span>claude-profiles</a>
+  <span class="links">
+    <a href="showcase.html">Overview</a>
+    <a href="strategic-routing.html" class="here">Strategic routing</a>
+    <a href="routing-log-and-labels.html">Routing log</a>
+    <a href="https://github.com/Vinniai/claude-profiles">GitHub ↗</a>
+  </span>
+</div></nav>
+
+<header class="hero">
+  <div class="wrap">
+    <span class="badge">claude-profiles · v3</span>
+    <h1>Strategic routing &amp;<br /><span class="grad">live account transitions</span></h1>
+    <p class="lede">Round-robin and budget-aware routing across your Claude OAuth accounts, eligibility rules driven by session &amp; weekly limits, and a terminal UI that shows every hand-off between accounts as it happens.</p>
+    <div class="metarow">
+      <span class="chip"><b>380</b> tests passing</span>
+      <span class="chip">strategies: <b>5</b></span>
+      <span class="chip">plan tiers · <b>sticky</b> sessions</span>
+      <span class="chip">ad-hoc chains · <b>inline weights</b></span>
+    </div>
+  </div>
+</header>
+
+<!-- THREE IMPROVEMENTS -->
+<section>
+  <div class="wrap">
+    <h2>What shipped</h2>
+    <div class="h2sub">Three improvements, built in parallel</div>
+    <div class="grid">
+      <div class="card">
+        <span class="n">A · usage</span>
+        <h3>Budget tracking</h3>
+        <p>Every account now carries a <b>session</b> (~5h rolling) and <b>weekly</b> budget — percent used and reset time. They self-populate from Claude’s own output, or you set them by hand.</p>
+      </div>
+      <div class="card">
+        <span class="n">B · strategy</span>
+        <h3>Strategic router</h3>
+        <p>Five pluggable strategies plus <b>eligibility policies</b> — “only spend this account while it has ≥ 50% weekly left”, “drain a session that resets in 10 minutes”, round-robin to spread load.</p>
+      </div>
+      <div class="card">
+        <span class="n">C · render</span>
+        <h3>Transition UI</h3>
+        <p>A boxed <b>hand-off card</b> on every failover showing <span style="color:var(--accent)">atlas ▸▸▸ orion</span>, the reason, and both accounts’ budget meters — plus a rich <code>chain status</code> dashboard.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- TRANSITION CARD -->
+<section>
+  <div class="wrap">
+    <h2>The moment of hand-off</h2>
+    <div class="h2sub">You see exactly why, and to whom</div>
+    <p class="note">When an account hits a limit, the router records a cooldown and routes on — and prints this card. Budget meters show <b>remaining</b> headroom (fuller = more left), so the switch is self-explanatory.</p>
+    <div class="term">
+      <div class="bar"><i class="d-r"></i><i class="d-y"></i><i class="d-g"></i><span class="title">claude-profiles run --chain default -- -p "ship it"</span></div>
+<pre><span class="dm">[1/2] trying profile "atlas" (round-robin)…</span>
+<span class="dm">╭───────────────────────────────────────────────────────────────────╮</span>
+<span class="dm">│</span>   <span class="o">■</span> <span class="bd">atlas</span>  <span class="o">▸▸▸</span>  <span class="c">orion</span>                                             <span class="dm">│</span>
+<span class="dm">│</span>   reason: <span class="dm">usage/rate limit reached</span>                                <span class="dm">│</span>
+<span class="dm">│</span>   atlas     session <span class="r">░░░░░░</span>   8%  weekly <span class="y">█░░░░░</span>  22%  <span class="dm">resets in 9m</span> <span class="dm">│</span>
+<span class="dm">│</span>   orion     session <span class="g">██████</span>  92%  weekly <span class="g">█████░</span>  88%  <span class="dm">resets in 4h</span> <span class="dm">│</span>
+<span class="dm">╰───────────────────────────────────────────────────────────────────╯</span>
+<span class="dm">[2/2] trying profile "orion" (priority)…</span>
+pong
+<span class="dm">(served by profile "orion")</span></pre>
+    </div>
+  </div>
+</section>
+
+<!-- STRATEGIES -->
+<section>
+  <div class="wrap">
+    <h2>Routing strategies</h2>
+    <div class="h2sub">How the next account is chosen</div>
+    <p class="note">The strategy orders the <em>healthy</em> accounts; cooled-down ones always wait at the back (soonest-to-reset first) and are never dropped. Set it globally or per-chain.</p>
+    <table>
+      <thead><tr><th>Strategy</th><th>Picks</th><th>Reach for it when…</th></tr></thead>
+      <tbody>
+        <tr><td><span class="strat">priority</span></td><td>Chain order, as written</td><td>Classic failover — a clear primary, then backups</td></tr>
+        <tr><td><span class="strat">round-robin</span></td><td>Least-recently-used first</td><td>Spread load evenly so no single account burns down</td></tr>
+        <tr><td><span class="strat">least-used</span></td><td>Lowest session % used</td><td>Always start on the freshest account</td></tr>
+        <tr><td><span class="strat">most-remaining</span></td><td>Most session budget / time left</td><td>Maximise the runway of a long task</td></tr>
+        <tr><td><span class="strat">weighted</span></td><td>Random, biased by <code>weight</code></td><td>Send 3× the work to a bigger plan</td></tr>
+      </tbody>
+    </table>
+    <div class="term">
+      <div class="bar"><i class="d-r"></i><i class="d-y"></i><i class="d-g"></i><span class="title">configure the strategy</span></div>
+<pre><span class="prompt">$</span> claude-profiles strategy set round-robin
+<span class="g">✓</span> Default routing strategy set to <span class="o">round-robin</span>.
+
+<span class="prompt">$</span> claude-profiles strategy set most-remaining --chain heavy
+<span class="g">✓</span> Chain "heavy" now routes with <span class="o">most-remaining</span>.</pre>
+    </div>
+  </div>
+</section>
+
+<!-- PLAN TIERS + STICKY -->
+<section>
+  <div class="wrap">
+    <h2>Plan-aware &amp; sticky</h2>
+    <div class="h2sub">Capacity the router understands, sessions that don’t fragment</div>
+    <p class="note">Tag each account with its subscription — <code>profile set &lt;name&gt; --plan pro|max-5x|max-20x</code> — and the router stops needing hand-tuned weights. Capacity feeds three behaviours at once.</p>
+    <div class="grid">
+      <div class="card">
+        <span class="n">weighted</span>
+        <h3>Default share</h3>
+        <p>With no explicit <code>weight</code>, a <span class="strat">weighted</span> split falls back to plan capacity — a <b>max-20x</b> gets ~4× the traffic of a <b>max-5x</b>, ~20× a <b>pro</b>.</p>
+      </div>
+      <div class="card">
+        <span class="n">most-remaining</span>
+        <h3>Absolute headroom</h3>
+        <p>Two accounts both at 50% aren’t equal — <span class="strat">most-remaining</span> scales the percentage by capacity, so a 20× at 50% outranks a 5× at 50%.</p>
+      </div>
+      <div class="card">
+        <span class="n">order</span>
+        <h3>Big-first by default</h3>
+        <p>With no explicit <code>priority</code> or chain order, the fleet sorts <b>big-first</b> — the most-headroom account leads, the smallest is the backstop.</p>
+      </div>
+    </div>
+
+    <div class="split" style="margin-top:22px">
+      <div class="panel">
+        <h4>tag the fleet</h4>
+        <div class="term" style="margin:0">
+          <div class="bar"><i class="d-r"></i><i class="d-y"></i><i class="d-g"></i><span class="title">profile set --plan</span></div>
+<pre><span class="prompt">$</span> claude-profiles profile set <span class="b">atlas</span> <span class="o">--plan</span> max-20x
+<span class="prompt">$</span> claude-profiles profile set <span class="b">orion</span> <span class="o">--plan</span> max-20x
+<span class="prompt">$</span> claude-profiles profile set <span class="b">vega</span>  <span class="o">--plan</span> max-5x
+<span class="prompt">$</span> claude-profiles profile set <span class="b">echo</span>  <span class="o">--plan</span> pro
+
+<span class="g">✓</span> explicit <span class="o">--weight</span> / <span class="o">--priority</span> always override the plan-derived value.</pre>
+        </div>
+      </div>
+      <div class="panel">
+        <h4>sticky sessions — context never splits</h4>
+        <div class="step"><div class="num">1</div><div class="t"><b>Fresh start</b> <span>— load-spreading (round-robin, weighted) chooses an account only at the <em>start</em> of a new interactive session.</span></div></div>
+        <div class="step"><div class="num">2</div><div class="t"><b>Continuation</b> <span>— a resumed session, including after a compaction, stays <em>pinned</em> to the account it began on. The strategy is not re-rolled.</span></div></div>
+        <div class="step"><div class="num">3</div><div class="t"><b>Only a limit moves you</b> <span>— you leave that account when it actually hits a limit, and continuity restores context onto the next one.</span></div></div>
+        <p style="margin:6px 0 0;color:var(--faint);font-size:13px">Pinning rides the handoff record’s <code style="color:var(--accent2)">lastProfile</code>; headless one-shots still spread freely.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- POLICIES + WORKED EXAMPLE -->
+<section>
+  <div class="wrap">
+    <h2>Eligibility policies</h2>
+    <div class="h2sub">Limit-aware rules — your exact scenario</div>
+    <p class="note">Gates evaluated against each account’s budget <em>before</em> it’s picked. A profile that fails a gate is moved to the back (and logged), never silently dropped. Set them globally, per-chain, or per-profile.</p>
+
+    <table>
+      <thead><tr><th>Gate</th><th>Meaning</th><th>Flag</th></tr></thead>
+      <tbody>
+        <tr><td><b>min weekly remaining</b></td><td>Require ≥ N% of the weekly budget left</td><td><code>--min-weekly 50</code></td></tr>
+        <tr><td><b>min session remaining</b></td><td>Require ≥ N% of the session budget left</td><td><code>--min-session 50</code></td></tr>
+        <tr><td><b>avoid if ending soon</b></td><td>Skip if the session resets within N min (don’t start work that gets cut off)</td><td><code>--avoid-within 10</code></td></tr>
+        <tr><td><b>prefer if ending soon</b></td><td>Boost an account whose session resets within N min (drain it before it’s wasted)</td><td><code>--prefer-within 10</code></td></tr>
+      </tbody>
+    </table>
+
+    <div class="split" style="margin-top:22px">
+      <div class="panel">
+        <h4>“use this account while it has 50% weekly left, and drain a session that resets in 10 min”</h4>
+        <div class="term" style="margin:0">
+          <div class="bar"><i class="d-r"></i><i class="d-y"></i><i class="d-g"></i><span class="title">model the rule</span></div>
+<pre><span class="prompt">$</span> claude-profiles strategy set round-robin
+<span class="prompt">$</span> claude-profiles strategy policy \
+    <span class="o">--min-weekly</span> 50 \
+    <span class="o">--prefer-within</span> 10
+
+<span class="g">✓</span> Updated the default routing policy.</pre>
+        </div>
+        <div class="kv" style="margin-top:14px">
+          <div><span class="k">strategy </span><span class="v">round-robin</span></div>
+          <div><span class="k">policy   </span><span class="v">weekly ≥ 50%, prefer if resets &lt; 10m</span></div>
+        </div>
+      </div>
+      <div class="panel">
+        <h4>What the router does</h4>
+        <div class="step"><div class="num">1</div><div class="t"><b>Filter</b> <span>— any account under 50% weekly is deferred to the back, with a logged reason.</span></div></div>
+        <div class="step"><div class="num">2</div><div class="t"><b>Order</b> <span>— remaining accounts spread by round-robin (least-recently-used first).</span></div></div>
+        <div class="step"><div class="num">3</div><div class="t"><b>Boost</b> <span>— an account whose session resets in &lt; 10 min jumps to the front, so its soon-to-reset budget gets used first.</span></div></div>
+        <div class="step"><div class="num">4</div><div class="t"><b>Run</b> <span>— if it limits mid-task, the hand-off card appears and the next eligible account takes over.</span></div></div>
+        <p style="margin:6px 0 0;color:var(--faint);font-size:13px">Per-profile override: <code style="color:var(--accent2)">strategy policy --profile work --min-weekly 20</code></p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- DASHBOARD -->
+<section>
+  <div class="wrap">
+    <h2>chain status</h2>
+    <div class="h2sub">Every account’s budget at a glance</div>
+    <div class="term">
+      <div class="bar"><i class="d-r"></i><i class="d-y"></i><i class="d-g"></i><span class="title">claude-profiles chain status</span></div>
+<pre><span class="o">■</span> <span class="bd">Profile health</span>
+
+<span class="o">■</span> <span class="bd">atlas</span> <span class="dm">— max-20x</span>
+  <span class="dm">status </span>  <span class="y">cooling down — 18h41m left — usage/rate limit reached</span>
+  <span class="dm">session</span>  <span class="r">█░░░░░░░░░░░</span>   8%
+  <span class="dm">weekly </span>  <span class="r">█░░░░░░░░░░░</span>   5%  <span class="dm">resets in 18h40m</span>
+
+<span class="o">■</span> <span class="bd">orion</span> <span class="dm">— max-20x</span>
+  <span class="dm">status </span>  <span class="g">healthy</span>
+  <span class="dm">session</span>  <span class="g">███████████░</span>  92%
+  <span class="dm">weekly </span>  <span class="g">███████████░</span>  88%</pre>
+    </div>
+    <p class="note">atlas’s weekly figure (<b>5%</b>) and its cooldown were <em>learned automatically</em> — the router parsed “you have used 95% of your weekly limit · resets at 5pm” straight out of the rate-limit message.</p>
+  </div>
+</section>
+
+<!-- COMMANDS -->
+<section>
+  <div class="wrap">
+    <h2>Reference</h2>
+    <div class="h2sub">New commands</div>
+    <table>
+      <thead><tr><th>Command</th><th>Does</th></tr></thead>
+      <tbody>
+        <tr><td><code>strategy show</code></td><td>Print the active strategy + every policy (global / chain / profile)</td></tr>
+        <tr><td><code>strategy set &lt;name&gt; [--chain c]</code></td><td>Choose a routing strategy, globally or for one chain</td></tr>
+        <tr><td><code>strategy policy [--chain|--profile] …</code></td><td>Set gates: <code>--min-weekly</code> <code>--min-session</code> <code>--avoid-within</code> <code>--prefer-within</code> · <code>--clear</code></td></tr>
+        <tr><td><code>usage show</code></td><td>Dashboard of session / weekly budgets per profile</td></tr>
+        <tr><td><code>usage set &lt;profile&gt; …</code></td><td>Manual budgets: <code>--session</code> <code>--weekly</code> (%, used) · <code>--session-reset 5h</code> <code>--weekly-reset 3d</code></td></tr>
+        <tr><td><code>usage clear &lt;profile&gt;</code></td><td>Drop a profile’s stored budget</td></tr>
+      </tbody>
+    </table>
+    <p class="note" style="margin-top:18px">All of this is additive and off by default — with no strategy or policy set, routing behaves exactly as before (<span class="strat">priority</span> order). The budgets are advisory: when a figure is unknown, the gate passes and the strategy degrades gracefully to chain order.</p>
+  </div>
+</section>
+
+<footer>
+  <div class="wrap">
+    <span class="pill">✓ 380 tests · build clean</span>
+    <p style="margin:16px 0 0">claude-profiles — run multiple Claude OAuth accounts side by side, fail over automatically, and route strategically by usage budget.</p>
+  </div>
+</footer>
+
+</body>
+</html>
