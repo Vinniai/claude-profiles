@@ -6,7 +6,7 @@ import os from 'os';
 // Mock paths module before importing profiles
 vi.mock('../../../src/lib/paths.js', () => ({
   getConfigPaths: vi.fn(),
-  getJeanClaudeDir: vi.fn(),
+  getClaudeProfilesDir: vi.fn(),
 }));
 
 import {
@@ -19,20 +19,20 @@ import {
   getShellAliasLine,
   SHARED_ITEMS,
 } from '../../../src/lib/profiles.js';
-import { getConfigPaths, getJeanClaudeDir } from '../../../src/lib/paths.js';
+import { getConfigPaths, getClaudeProfilesDir } from '../../../src/lib/paths.js';
 
 describe('profiles.ts', () => {
   let tempDir: string;
   let claudeConfigDir: string;
-  let jeanClaudeDir: string;
+  let claudeProfilesDir: string;
 
   beforeEach(async () => {
     tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'jean-claude-test-'));
     claudeConfigDir = path.join(tempDir, '.claude');
-    jeanClaudeDir = path.join(tempDir, '.jean-claude');
+    claudeProfilesDir = path.join(tempDir, '.claude-profiles');
 
     await fs.ensureDir(claudeConfigDir);
-    await fs.ensureDir(jeanClaudeDir);
+    await fs.ensureDir(claudeProfilesDir);
 
     // Redirect os.homedir() so getProfileConfigDir creates dirs inside tempDir
     vi.spyOn(os, 'homedir').mockReturnValue(tempDir);
@@ -40,10 +40,10 @@ describe('profiles.ts', () => {
     // Set up mocks
     vi.mocked(getConfigPaths).mockReturnValue({
       claudeConfigDir,
-      jeanClaudeDir,
+      claudeProfilesDir,
       platform: 'darwin',
     });
-    vi.mocked(getJeanClaudeDir).mockReturnValue(jeanClaudeDir);
+    vi.mocked(getClaudeProfilesDir).mockReturnValue(claudeProfilesDir);
   });
 
   afterEach(async () => {
@@ -208,7 +208,7 @@ describe('profiles.ts', () => {
     it('should not leave temp files on successful save', async () => {
       await saveProfiles({ profiles: {} });
 
-      const jcDir = getJeanClaudeDir();
+      const jcDir = getClaudeProfilesDir();
       const files = await fs.readdir(jcDir);
       const tmpFiles = files.filter(f => f.endsWith('.tmp'));
       expect(tmpFiles).toEqual([]);
@@ -223,7 +223,7 @@ describe('profiles.ts', () => {
       // Install the alias
       await installShellAlias('my-work', profile, '.zshrc');
       const content1 = await fs.readFile(rcPath, 'utf-8');
-      expect(content1).toContain('jean-claude profile: my-work');
+      expect(content1).toContain('claude-profiles profile: my-work');
       expect(content1).toContain('claude-my-work');
 
       // Re-install (should replace, not duplicate)
@@ -232,7 +232,7 @@ describe('profiles.ts', () => {
       const content2 = await fs.readFile(rcPath, 'utf-8');
 
       // Should only have one alias block
-      const matches = content2.match(/jean-claude profile: my-work/g);
+      const matches = content2.match(/claude-profiles profile: my-work/g);
       expect(matches?.length).toBe(1);
       expect(content2).toContain('/updated/path');
     });
@@ -250,8 +250,8 @@ describe('profiles.ts', () => {
       expect(removed).toBe(true);
 
       const content = await fs.readFile(rcPath, 'utf-8');
-      expect(content).not.toContain('jean-claude profile: a\n');
-      expect(content).toContain('jean-claude profile: ab');
+      expect(content).not.toContain('claude-profiles profile: a\n');
+      expect(content).toContain('claude-profiles profile: ab');
     });
   });
 
