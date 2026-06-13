@@ -1,0 +1,287 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>claude-profiles — Deliberate vs Automatic Failover · Routing Log · Session Recall</title>
+<style>
+  :root{
+    --bg:#0e0f12; --bg2:#15171c; --bg3:#1b1e24; --line:#2a2e37;
+    --fg:#e7e9ee; --dim:#9aa1ad; --faint:#6b7280;
+    --accent:#FF6B4A; --accent2:#ffb199;
+    --green:#4ade80; --yellow:#fbbf24; --red:#f87171; --cyan:#5eead4; --blue:#7dd3fc;
+    --mono:"SF Mono",ui-monospace,"JetBrains Mono",Menlo,Consolas,monospace;
+    --sans:-apple-system,BlinkMacSystemFont,"Segoe UI",Inter,Roboto,sans-serif;
+  }
+  *{box-sizing:border-box}
+  html{scroll-behavior:smooth}
+  body{margin:0;background:radial-gradient(1200px 600px at 80% -10%,#241b18 0,var(--bg) 55%);color:var(--fg);font-family:var(--sans);line-height:1.6;-webkit-font-smoothing:antialiased}
+  a{color:var(--accent2);text-decoration:none}
+  .wrap{max-width:980px;margin:0 auto;padding:0 22px}
+  code,kbd{font-family:var(--mono)}
+
+  /* hero */
+  header.hero{padding:74px 0 40px;border-bottom:1px solid var(--line)}
+  .badge{display:inline-block;font-family:var(--mono);font-size:12px;letter-spacing:.12em;text-transform:uppercase;color:var(--accent);border:1px solid #3a2a24;background:#1c1512;border-radius:999px;padding:5px 12px;margin-bottom:20px}
+  h1{font-size:44px;line-height:1.1;margin:0 0 14px;letter-spacing:-.02em}
+  h1 .grad{background:linear-gradient(92deg,var(--accent),#ffd0a8);-webkit-background-clip:text;background-clip:text;color:transparent}
+  .lede{font-size:19px;color:var(--dim);max-width:740px;margin:0}
+  .metarow{display:flex;gap:10px;flex-wrap:wrap;margin-top:26px}
+  .chip{font-family:var(--mono);font-size:12.5px;color:var(--dim);background:var(--bg2);border:1px solid var(--line);border-radius:8px;padding:7px 11px}
+  .chip b{color:var(--fg)}
+
+  section{padding:52px 0;border-bottom:1px solid var(--line)}
+  h2{font-size:13px;letter-spacing:.16em;text-transform:uppercase;color:var(--accent);margin:0 0 8px;font-family:var(--mono)}
+  .h2sub{font-size:27px;margin:0 0 22px;letter-spacing:-.01em}
+  p.note{color:var(--dim);max-width:780px}
+
+  /* legend */
+  .legend{display:grid;grid-template-columns:repeat(2,1fr);gap:14px;margin-top:8px}
+  @media(max-width:760px){.legend{grid-template-columns:1fr}}
+  .leg{display:flex;gap:14px;align-items:flex-start;background:linear-gradient(180deg,var(--bg2),var(--bg));border:1px solid var(--line);border-radius:14px;padding:16px 18px}
+  .leg .gly{font-family:var(--mono);font-size:26px;line-height:1;width:30px;text-align:center;padding-top:2px}
+  .leg h3{margin:0 0 4px;font-size:16px;font-family:var(--mono)}
+  .leg p{margin:0;color:var(--dim);font-size:14px}
+  .leg.deliberate{border-color:#1f4f4a}.leg.deliberate .gly{color:var(--cyan)}
+  .leg.auto{border-color:#5a4a1e}.leg.auto .gly{color:var(--yellow)}
+  .leg.launch{border-color:#4a2f24}.leg.launch .gly{color:var(--accent)}
+  .leg.exhausted{border-color:#5a2424}.leg.exhausted .gly{color:var(--red)}
+  .leg small{color:var(--faint);font-family:var(--mono);font-size:12px}
+
+  /* terminal */
+  .term{background:#0a0b0e;border:1px solid var(--line);border-radius:12px;overflow:hidden;box-shadow:0 20px 50px -28px #000;margin:18px 0}
+  .term .bar{display:flex;align-items:center;gap:7px;padding:10px 14px;border-bottom:1px solid var(--line);background:#101216}
+  .term .bar i{width:11px;height:11px;border-radius:50%;display:inline-block}
+  .d-r{background:#ff5f56}.d-y{background:#ffbd2e}.d-g{background:#27c93f}
+  .term .title{margin-left:8px;font-family:var(--mono);font-size:12px;color:var(--faint)}
+  .term pre{margin:0;padding:18px;font-family:var(--mono);font-size:13px;line-height:1.55;overflow-x:auto;color:#d6d9e0;white-space:pre}
+  .o{color:var(--accent)}.g{color:var(--green)}.y{color:var(--yellow)}.r{color:var(--red)}
+  .c{color:var(--cyan)}.b{color:var(--blue)}.dm{color:var(--faint)}.bd{color:#fff;font-weight:600}
+  .prompt{color:var(--accent)}
+
+  /* feature grid */
+  .grid{display:grid;grid-template-columns:repeat(3,1fr);gap:16px;margin-top:6px}
+  @media(max-width:760px){.grid{grid-template-columns:1fr}}
+  .card{background:linear-gradient(180deg,var(--bg2),var(--bg));border:1px solid var(--line);border-radius:14px;padding:20px}
+  .card .n{font-family:var(--mono);font-size:12px;color:var(--accent);border:1px solid #3a2a24;border-radius:7px;padding:2px 8px;display:inline-block;margin-bottom:12px}
+  .card h3{margin:0 0 8px;font-size:17px}
+  .card p{margin:0;color:var(--dim);font-size:14px}
+
+  /* tables */
+  table{width:100%;border-collapse:collapse;font-size:14px;margin-top:6px}
+  th,td{text-align:left;padding:10px 12px;border-bottom:1px solid var(--line);vertical-align:top}
+  th{font-family:var(--mono);font-size:11.5px;letter-spacing:.06em;text-transform:uppercase;color:var(--faint);font-weight:600}
+  td code{background:var(--bg3);border:1px solid var(--line);border-radius:6px;padding:1px 6px;font-size:12.5px}
+  .pill{font-family:var(--mono);font-size:11.5px;border-radius:999px;padding:2px 9px;white-space:nowrap}
+  .pill.deliberate{color:var(--cyan);border:1px solid #1f4f4a;background:#0d1a18}
+  .pill.auto{color:var(--yellow);border:1px solid #5a4a1e;background:#1a1509}
+  .pill.launch{color:var(--accent);border:1px solid #4a2f24;background:#190f0b}
+  .pill.exhausted{color:var(--red);border:1px solid #5a2424;background:#190b0b}
+
+  footer{padding:40px 0 70px;color:var(--faint);font-size:13px}
+  .mut{color:var(--faint)}
+
+  /* shared doc nav */
+  .docnav{position:sticky;top:0;z-index:50;background:rgba(14,15,18,.82);backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);border-bottom:1px solid var(--line)}
+  .docnav .row{max-width:980px;margin:0 auto;padding:13px 22px;display:flex;align-items:center;justify-content:space-between;gap:14px}
+  .docnav .brand{display:flex;align-items:center;gap:8px;font-family:var(--mono);font-weight:600;color:var(--fg)}
+  .docnav .brand .d{width:9px;height:9px;border-radius:50%;background:var(--accent);box-shadow:0 0 10px var(--accent)}
+  .docnav .links{display:flex;gap:20px;flex-wrap:wrap}
+  .docnav .links a{color:var(--dim);font-size:13.5px;font-weight:500}
+  .docnav .links a:hover{color:var(--fg)}
+  .docnav .links a.here{color:var(--accent)}
+  @media(max-width:640px){.docnav .links{display:none}}
+</style>
+</head>
+<body>
+
+<nav class="docnav"><div class="row">
+  <a class="brand" href="showcase.html"><span class="d"></span>claude-profiles</a>
+  <span class="links">
+    <a href="showcase.html">Overview</a>
+    <a href="strategic-routing.html">Strategic routing</a>
+    <a href="routing-log-and-labels.html" class="here">Routing log</a>
+    <a href="https://github.com/Vinniai/claude-profiles">GitHub ↗</a>
+  </span>
+</div></nav>
+
+<div class="wrap">
+
+  <header class="hero">
+    <span class="badge">claude-profiles · routing observability</span>
+    <h1>Tell a <span class="grad">deliberate switch</span> from an <span class="grad">automatic failover</span> — at a glance, and across sessions.</h1>
+    <p class="lede">Every time work moves between accounts, claude-profiles records <b>why</b>. A move you chose looks nothing like a move a rate-limit forced. Those labels show up live in the terminal, when you query state, and in a durable routing log that survives restarts and reset.</p>
+    <div class="metarow">
+      <span class="chip"><b>◆</b> manual switch</span>
+      <span class="chip"><b>▲</b> auto-failover</span>
+      <span class="chip"><b>▸</b> launch</span>
+      <span class="chip"><b>×</b> exhausted</span>
+      <span class="chip">log persisted to <b>routing-log.json</b></span>
+    </div>
+  </header>
+
+  <!-- 1. THE FOUR KINDS -->
+  <section>
+    <h2>01 · The vocabulary</h2>
+    <div class="h2sub">Four kinds, two headline categories</div>
+    <p class="note">A move is either something a human/agent <b>chose</b> (deliberate) or something a CLI error <b>forced</b> (automatic). Launch and exhausted bracket the run. Each kind gets a width-1 glyph and its own color so the categories never read alike.</p>
+    <div class="legend">
+      <div class="leg deliberate">
+        <div class="gly">◆</div>
+        <div><h3>manual switch</h3><p>You picked another account on purpose — via the channel <code>switch_account</code> tool or HTTP control face. <small>category: deliberate · cyan</small></p></div>
+      </div>
+      <div class="leg auto">
+        <div class="gly">▲</div>
+        <div><h3>auto-failover (limit / auth / server)</h3><p>The Claude CLI returned 429 / expired-auth / 5xx and the router rerouted itself. <small>category: auto-failover · yellow</small></p></div>
+      </div>
+      <div class="leg launch">
+        <div class="gly">▸</div>
+        <div><h3>launch</h3><p>The first, strategy-driven account a run started on. <small>category: launch · orange</small></p></div>
+      </div>
+      <div class="leg exhausted">
+        <div class="gly">×</div>
+        <div><h3>exhausted</h3><p>No healthy account was left to try. <small>category: exhausted · red</small></p></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- 2. LIVE TRANSITION CARDS -->
+  <section>
+    <h2>02 · In the terminal, live</h2>
+    <div class="h2sub">The failover card colors its marker by category</div>
+    <p class="note">When <code>run</code> moves work mid-session, it prints a card. A deliberate switch is cyan and says so; an automatic one is yellow and names the trigger — you never have to guess which happened.</p>
+
+    <div class="term">
+      <div class="bar"><i class="d-r"></i><i class="d-y"></i><i class="d-g"></i><span class="title">claude-profiles run --chain fleet  ·  automatic</span></div>
+<pre><span class="dm">╭─────────────────────────────────────────────────────────────────╮</span>
+<span class="dm">│</span> <span class="y">▲</span> <span class="bd">atlas</span>  <span class="o">▸▸▸</span>  <span class="c">orion</span>                                       <span class="dm">│</span>
+<span class="dm">│</span> <span class="y">▲ auto-failover (limit)</span>                                        <span class="dm">│</span>
+<span class="dm">│</span> reason: <span class="dm">usage limit reached — resets 14:30</span>                     <span class="dm">│</span>
+<span class="dm">│</span> atlas     session <span class="r">█░░░░░</span>  10%  weekly <span class="y">███░░░</span>  48%  <span class="dm">resets in 2h10m</span> <span class="dm">│</span>
+<span class="dm">│</span> orion     session <span class="g">██████</span> 100%  weekly <span class="g">█████░</span>  86%               <span class="dm">│</span>
+<span class="dm">╰─────────────────────────────────────────────────────────────────╯</span></pre>
+    </div>
+
+    <div class="term">
+      <div class="bar"><i class="d-r"></i><i class="d-y"></i><i class="d-g"></i><span class="title">channel: switch_account  ·  deliberate</span></div>
+<pre><span class="dm">╭─────────────────────────────────────────────────────────────────╮</span>
+<span class="dm">│</span> <span class="c">◆</span> <span class="bd">orion</span>  <span class="o">▸▸▸</span>  <span class="c">atlas</span>                                        <span class="dm">│</span>
+<span class="dm">│</span> <span class="c">◆ manual switch</span>                                                <span class="dm">│</span>
+<span class="dm">│</span> reason: <span class="dm">deliberate switch — moving this thread back to atlas</span>    <span class="dm">│</span>
+<span class="dm">│</span> orion     session <span class="g">█████░</span>  82%  weekly <span class="g">█████░</span>  86%               <span class="dm">│</span>
+<span class="dm">│</span> atlas     session <span class="g">██████</span> 100%  weekly <span class="y">███░░░</span>  48%  <span class="dm">resets in 2h10m</span> <span class="dm">│</span>
+<span class="dm">╰─────────────────────────────────────────────────────────────────╯</span></pre>
+    </div>
+    <p class="note mut">Same box, same arrow — only the <b>marker</b>, <b>color</b>, and <b>badge line</b> change. The eye catches the difference before the words register.</p>
+  </section>
+
+  <!-- 3. WHEN YOU QUERY STATE -->
+  <section>
+    <h2>03 · When you query state</h2>
+    <div class="h2sub"><code>chain status</code> labels <i>why</i> each account is down</div>
+    <p class="note">A cooling account now carries a <code>via</code> badge so you can tell a profile you parked on purpose from one a limit knocked out.</p>
+    <div class="term">
+      <div class="bar"><i class="d-r"></i><i class="d-y"></i><i class="d-g"></i><span class="title">claude-profiles chain status</span></div>
+<pre><span class="prompt">$</span> claude-profiles chain status
+
+<span class="o">■</span> <span class="bd">atlas</span> <span class="dm">— max-20x account</span>
+  status   <span class="y">cooling down</span> <span class="dm">— 2h10m left — usage limit reached</span>
+  via      <span class="y">▲</span> <span class="y">auto-failover (limit)</span>
+  session  <span class="r">█░░░░░░░░░░░</span>  10%  <span class="dm">resets in 2h10m</span>
+  weekly   <span class="y">█████░░░░░░░</span>  48%
+
+<span class="o">■</span> <span class="bd">orion</span> <span class="dm">— max-5x account</span>
+  status   <span class="g">healthy</span>
+  session  <span class="g">██████████░░</span>  82%
+  weekly   <span class="g">██████████░░</span>  86%
+
+<span class="o">■</span> <span class="bd">vega</span> <span class="dm">— pro backstop</span>
+  status   <span class="y">cooling down</span> <span class="dm">— 58m left — parked for the demo</span>
+  via      <span class="c">◆</span> <span class="c">manual switch</span>
+  session  <span class="g">███████░░░░░</span>  64%
+  weekly   <span class="g">█████████░░░</span>  78%</pre>
+    </div>
+    <p class="note mut">atlas is yellow — a limit forced it down. vega is cyan — you parked it deliberately. The runtime carries this on <code>ProfileRuntimeState.lastEventKind</code>.</p>
+  </section>
+
+  <!-- 4. THE ROUTING LOG -->
+  <section>
+    <h2>04 · Routing directions over time · session recall</h2>
+    <div class="h2sub"><code>chain log</code> — the durable timeline</div>
+    <p class="note">Every launch, deliberate switch and automatic failover is appended to <code>routing-log.json</code> — a separate, atomically-written file that <b>survives <code>chain reset</code></b> (which only clears cooldowns) and is written by <b>any</b> process: the <code>run</code> supervisor in one session, the channel sidecar in another. That shared, durable file is what lets the history be recalled across sessions.</p>
+    <div class="term">
+      <div class="bar"><i class="d-r"></i><i class="d-y"></i><i class="d-g"></i><span class="title">claude-profiles chain log --chain fleet</span></div>
+<pre><span class="prompt">$</span> claude-profiles chain log --chain fleet
+
+<span class="o">■</span> <span class="bd">Routing history — chain "default"</span>
+
+<span class="o">▸</span> <span class="o">launch</span>  <span class="o">▸▸▸</span> <span class="c">atlas</span>  <span class="dm">2d ago</span>  <span class="dm">[fleet]</span>
+<span class="y">▲</span> <span class="y">auto-failover (limit)</span>  <span class="bd">atlas</span> <span class="o">▸▸▸</span> <span class="c">orion</span>  <span class="dm">2d ago</span>  <span class="dm">[fleet]</span>  <span class="dm">— usage limit reached — resets 14:30</span>
+<span class="o">▸</span> <span class="o">launch</span>  <span class="o">▸▸▸</span> <span class="c">orion</span>  <span class="dm">5h ago</span>  <span class="dm">[fleet]</span>
+<span class="c">◆</span> <span class="c">manual switch</span>  <span class="bd">orion</span> <span class="o">▸▸▸</span> <span class="c">atlas</span>  <span class="dm">38m ago</span>  <span class="dm">[fleet]</span>  <span class="dm">— deliberate switch — testing failover</span>
+<span class="y">▲</span> <span class="y">auto-failover (server)</span>  <span class="bd">atlas</span> <span class="o">▸▸▸</span> <span class="c">vega</span>  <span class="dm">9m ago</span>  <span class="dm">[fleet]</span>  <span class="dm">— overloaded (529)</span>
+<span class="r">×</span> <span class="r">exhausted</span>  <span class="bd">vega</span> <span class="o">▸▸▸</span> <span class="r">(none)</span>  <span class="dm">just now</span>  <span class="dm">[fleet]</span>  <span class="dm">— all profiles cooling down</span></pre>
+    </div>
+
+    <table>
+      <tr><th>flag</th><th>does</th></tr>
+      <tr><td><code>-c, --chain &lt;name&gt;</code></td><td>Only show events for one chain</td></tr>
+      <tr><td><code>-n, --limit &lt;n&gt;</code></td><td>How many recent events to show (default 20)</td></tr>
+      <tr><td><code>--clear</code></td><td>Erase the routing history</td></tr>
+    </table>
+  </section>
+
+  <!-- 5. DELIBERATE SWITCH FLOW -->
+  <section>
+    <h2>05 · Where "deliberate" comes from</h2>
+    <div class="h2sub">The channel lets you move work mid-run, on purpose</div>
+    <p class="note">A Claude Code <b>Channel</b> sidecar watches state and exposes a <code>switch_account</code> tool plus an HTTP face. Choosing a target writes the cooldowns the launcher consumes on the next session exit — and stamps the move as <span class="pill deliberate">◆ manual</span>, never <span class="pill auto">▲ auto</span>.</p>
+    <div class="term">
+      <div class="bar"><i class="d-r"></i><i class="d-y"></i><i class="d-g"></i><span class="title">deliberately route the thread to orion</span></div>
+<pre><span class="prompt">$</span> curl -s -XPOST localhost:8799/switch <span class="dm">\</span>
+     -d '{"target":"orion","reason":"draining atlas before reset"}'
+
+<span class="dm">{</span>
+  <span class="c">"ok"</span>: <span class="g">true</span>,
+  <span class="c">"cooled"</span>: [<span class="g">"atlas"</span>],
+  <span class="c">"next"</span>: <span class="g">"orion"</span>,
+  <span class="c">"kind"</span>: <span class="g">"manual"</span>,
+  <span class="c">"note"</span>: <span class="g">"atlas parked; next healthy account is orion"</span>
+<span class="dm">}</span>
+
+<span class="dm"># next time the claude session exits, the supervisor relaunches on orion</span>
+<span class="dm"># and the move lands in the log as ◆ manual switch — not ▲ auto-failover.</span></pre>
+    </div>
+    <div class="grid">
+      <div class="card"><span class="n">signal</span><h3>Channel writes intent</h3><p>A deliberate <code>switch_account</code> sets a cooldown <i>and</i> tags <code>lastEventKind: "manual"</code>.</p></div>
+      <div class="card"><span class="n">execute</span><h3>Launcher consumes it</h3><p>On session exit the supervisor relaunches on the chosen account, restoring context via the continuity handoff.</p></div>
+      <div class="card"><span class="n">record</span><h3>Log keeps the why</h3><p>Both the manual switch and any later auto-failover are appended with distinct kinds for recall.</p></div>
+    </div>
+  </section>
+
+  <!-- 6. MAP -->
+  <section>
+    <h2>06 · Kind → category → label</h2>
+    <div class="h2sub">One source of truth</div>
+    <table>
+      <tr><th>kind</th><th>category</th><th>glyph</th><th>label</th><th>set by</th></tr>
+      <tr><td><code>launch</code></td><td><span class="pill launch">launch</span></td><td class="o">▸</td><td>launch</td><td>first <code>onLaunch</code> / <code>onAttempt</code></td></tr>
+      <tr><td><code>manual</code></td><td><span class="pill deliberate">deliberate</span></td><td class="c">◆</td><td>manual switch</td><td>channel <code>requestSwitch</code></td></tr>
+      <tr><td><code>limit</code></td><td><span class="pill auto">auto-failover</span></td><td class="y">▲</td><td>auto-failover (limit)</td><td>router on 429</td></tr>
+      <tr><td><code>auth</code></td><td><span class="pill auto">auto-failover</span></td><td class="y">▲</td><td>auto-failover (auth)</td><td>router on expired auth</td></tr>
+      <tr><td><code>server</code></td><td><span class="pill auto">auto-failover</span></td><td class="y">▲</td><td>auto-failover (server)</td><td>router on 5xx / overloaded</td></tr>
+      <tr><td><code>exhausted</code></td><td><span class="pill exhausted">exhausted</span></td><td class="r">×</td><td>exhausted</td><td>no healthy account left</td></tr>
+    </table>
+    <p class="note mut">Classification (<code>routingCategory</code>) and labels (<code>routingLabel</code>) are pure, IO-free, color-free functions in <code>routing-log.ts</code>; the terminal layer in <code>render.ts</code> adds the color. 380 unit tests green.</p>
+  </section>
+
+  <footer>
+    <div class="wrap" style="padding:0">
+      claude-profiles · deliberate vs automatic failover · routing log · session recall<br>
+      <span class="mut">Mock data for illustration. Glyphs and colors match the real CLI output.</span>
+    </div>
+  </footer>
+
+</div>
+</body>
+</html>

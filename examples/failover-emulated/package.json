@@ -1,0 +1,12 @@
+{
+  "name": "claude-profiles-failover-emulated",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "npx --yes hyperframes preview",
+    "check": "npx --yes hyperframes lint && npx --yes hyperframes validate && npx --yes hyperframes inspect",
+    "render": "npx --yes hyperframes render",
+    "emulator": "npx --yes agent-emulate --service anthropic --port 4099",
+    "e2e": "../../tests/e2e/test-fallback-emulated.sh"
+  }
+}

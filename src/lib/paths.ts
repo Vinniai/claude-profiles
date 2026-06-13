@@ -44,11 +44,6 @@ export function getClaudeProfilesDir(): string {
   return current;
 }
 
-/** @deprecated Use `getClaudeProfilesDir`. Kept so existing imports keep working. */
-export function getJeanClaudeDir(): string {
-  return getClaudeProfilesDir();
-}
-
 export function detectClaudeConfigDir(): string {
   const home = os.homedir();
 
@@ -72,7 +67,7 @@ export function detectClaudeConfigDir(): string {
 
 export function getConfigPaths(): ConfigPaths {
   return {
-    jeanClaudeDir: getJeanClaudeDir(),
+    claudeProfilesDir: getClaudeProfilesDir(),
     claudeConfigDir: detectClaudeConfigDir(),
     platform: detectPlatform(),
   };

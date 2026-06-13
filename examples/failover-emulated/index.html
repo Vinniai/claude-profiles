@@ -1,0 +1,455 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=1920, height=1080" />
+    <title>claude-profiles · failover, proven against an emulated Anthropic API</title>
+    <script src="https://cdn.jsdelivr.net/npm/gsap@3.14.2/dist/gsap.min.js"></script>
+    <style>
+      * { margin: 0; padding: 0; box-sizing: border-box; }
+      html, body {
+        width: 1920px; height: 1080px; overflow: hidden;
+        background: #1b1a18;
+        font-family: -apple-system, "SF Pro Display", "SF Pro Text",
+          "Helvetica Neue", system-ui, sans-serif;
+        color: #ece7dc;
+      }
+      :root {
+        --accent: #ff6b4a;   /* claude-profiles orange */
+        --cyan:   #54d6c8;   /* deliberate / manual */
+        --amber:  #f2b53a;   /* auto-failover */
+        --red:    #e8604c;   /* exhausted / limit */
+        --ink:    #1b1a18;
+        --panel:  #232120;
+        --line:   #3a3733;
+        --dim:    #9a9486;
+      }
+      .mono {
+        font-family: "SF Mono", "SFMono-Regular", Menlo, monospace;
+        font-variant-numeric: tabular-nums;
+      }
+      .num { font-variant-numeric: tabular-nums; }
+
+      /* ---- Scene shell ---- */
+      .scene {
+        position: absolute; inset: 0;
+        background-color: var(--ink);
+        opacity: 0;
+        filter: blur(var(--blur, 0px));
+      }
+      #s1 { z-index: 1; } #s2 { z-index: 2; } #s3 { z-index: 3; }
+      #s4 { z-index: 4; } #s5 { z-index: 5; }
+      #wash {
+        position: absolute; inset: 0; z-index: 9;
+        background: var(--accent); opacity: 0; pointer-events: none;
+      }
+
+      /* ---- Shared decoratives ---- */
+      .glow {
+        position: absolute; width: 1500px; height: 1500px; border-radius: 50%;
+        background: radial-gradient(circle,
+          rgba(255,107,74,0.26) 0%, rgba(255,107,74,0.08) 40%,
+          rgba(255,107,74,0) 70%);
+        pointer-events: none;
+      }
+      .vignette {
+        position: absolute; inset: 0; pointer-events: none;
+        background: radial-gradient(circle at 50% 46%,
+          rgba(20,19,17,0) 44%, rgba(20,19,17,0.86) 100%);
+      }
+      .tag {
+        position: absolute; top: 56px; left: 210px;
+        font-size: 21px; color: var(--dim); letter-spacing: 0.2em;
+      }
+      .ghost {
+        position: absolute; font-weight: 900; letter-spacing: -0.04em;
+        color: rgba(255,107,74,0.09); white-space: nowrap;
+      }
+      .tick {
+        position: absolute; width: 26px; height: 26px;
+        border-color: #4a4742; border-style: solid; border-width: 0;
+        opacity: 0.55;
+      }
+
+      /* ---- Type ---- */
+      .kicker {
+        font-size: 24px; letter-spacing: 0.34em; text-transform: uppercase;
+        color: var(--accent); font-weight: 700;
+      }
+      .h-thin { font-size: 128px; font-weight: 200; line-height: 1.02; letter-spacing: -0.02em; }
+      .h-bold { font-size: 128px; font-weight: 800; line-height: 1.02; letter-spacing: -0.03em; }
+      .accent { color: var(--accent); }
+      .sub { font-size: 30px; color: var(--dim); line-height: 1.5; font-weight: 400; }
+      .caption {
+        position: absolute; font-size: 27px; color: var(--dim);
+        line-height: 1.45; max-width: 1180px;
+      }
+
+      /* ---- Panels / nodes ---- */
+      .panel {
+        position: absolute; background: var(--panel);
+        border: 1px solid var(--line); border-radius: 22px;
+      }
+      .node {
+        position: absolute; width: 430px; border-radius: 20px;
+        background: var(--panel); border: 1px solid var(--line);
+        padding: 30px 34px;
+      }
+      .node .who { font-size: 34px; font-weight: 700; }
+      .node .meta { font-size: 22px; color: var(--dim); margin-top: 8px; }
+      .node .state {
+        margin-top: 22px; font-size: 22px; font-weight: 600;
+        display: inline-flex; align-items: center; gap: 12px;
+      }
+      .dot { width: 14px; height: 14px; border-radius: 50%; display: inline-block; }
+      .dot.green { background: #5fd08a; box-shadow: 0 0 16px rgba(95,208,138,0.7); }
+      .dot.amber { background: var(--amber); box-shadow: 0 0 16px rgba(242,181,58,0.7); }
+      .dot.red   { background: var(--red);  box-shadow: 0 0 16px rgba(232,96,76,0.7); }
+
+      .pill {
+        position: absolute; display: inline-flex; align-items: center; gap: 14px;
+        padding: 16px 26px; border-radius: 999px; font-size: 26px; font-weight: 600;
+        border: 1px solid var(--line); background: rgba(35,33,32,0.92);
+      }
+      .glyph { font-size: 30px; line-height: 1; }
+      .g-launch { color: var(--accent); }
+      .g-manual { color: var(--cyan); }
+      .g-auto   { color: var(--amber); }
+      .g-exh    { color: var(--red); }
+
+      /* arrows */
+      .arrow {
+        position: absolute; height: 4px; border-radius: 2px;
+        background: linear-gradient(90deg, rgba(255,107,74,0) 0%, var(--accent) 40%, var(--accent) 100%);
+        transform-origin: left center;
+      }
+      .arrow.amber { background: linear-gradient(90deg, rgba(242,181,58,0) 0%, var(--amber) 40%, var(--amber) 100%); }
+      .arrow-head {
+        position: absolute; width: 0; height: 0;
+        border-top: 13px solid transparent; border-bottom: 13px solid transparent;
+        border-left: 20px solid var(--accent);
+      }
+      .arrow-head.amber { border-left-color: var(--amber); }
+
+      /* terminal / code panes */
+      .term {
+        position: absolute; background: #131211; border: 1px solid var(--line);
+        border-radius: 18px; padding: 30px 34px; font-size: 26px; line-height: 1.62;
+      }
+      .term .ln { white-space: pre; }
+      .c-dim { color: var(--dim); }
+      .c-ok  { color: #5fd08a; }
+      .c-acc { color: var(--accent); }
+      .c-amb { color: var(--amber); }
+      .c-red { color: var(--red); }
+      .c-cy  { color: var(--cyan); }
+      .prompt { color: var(--accent); }
+
+      .badge {
+        position: absolute; display: inline-flex; align-items: center; gap: 12px;
+        font-size: 24px; font-weight: 700; padding: 12px 22px;
+        border-radius: 12px; border: 1px solid;
+      }
+      .badge.http200 { color: #5fd08a; border-color: rgba(95,208,138,0.45); background: rgba(95,208,138,0.08); }
+      .badge.http401 { color: var(--red); border-color: rgba(232,96,76,0.45); background: rgba(232,96,76,0.08); }
+      .badge.limit   { color: var(--amber); border-color: rgba(242,181,58,0.45); background: rgba(242,181,58,0.08); }
+
+      /* routing-log timeline */
+      .tl-row {
+        position: absolute; display: flex; align-items: center; gap: 20px;
+        font-size: 27px;
+      }
+      .tl-glyph { font-size: 30px; width: 34px; text-align: center; }
+      .tl-route { color: #ece7dc; font-weight: 600; }
+      .tl-ago { color: var(--dim); font-size: 22px; }
+
+      .lock { position: absolute; display: flex; align-items: center; gap: 18px; }
+      .lock-mark {
+        width: 64px; height: 64px; border-radius: 16px; background: var(--accent);
+        display: flex; align-items: center; justify-content: center;
+        font-weight: 900; font-size: 34px; color: #1b1a18;
+      }
+      .lock-txt { font-size: 30px; font-weight: 700; }
+      .live { position: absolute; display: inline-flex; align-items: center; gap: 12px; font-size: 22px; color: var(--dim); letter-spacing: 0.2em; }
+      .live-dot { width: 12px; height: 12px; border-radius: 50%; background: var(--red); box-shadow: 0 0 14px var(--red); }
+    </style>
+  </head>
+  <body>
+    <div
+      id="root"
+      data-composition-id="main"
+      data-start="0"
+      data-duration="23"
+      data-width="1920"
+      data-height="1080"
+      data-track-index="0"
+    >
+      <!-- ============ S1 — Cold open ============ -->
+      <div id="s1" class="scene" data-layout-allow-overflow>
+        <div id="s1-glow" class="glow" data-layout-ignore style="left: 54%; top: 26%;"></div>
+        <div class="vignette" data-layout-ignore></div>
+        <div id="s1-ghost" class="ghost" data-layout-ignore
+          style="font-size: 430px; left: -40px; top: 320px;">FAILOVER</div>
+        <div id="s1-tag" class="tag mono">CLAUDE-PROFILES · E2E · AGENT-EMULATE</div>
+        <div id="s1-tk1" class="tick" data-layout-ignore
+          style="left: 150px; top: 150px; border-left-width: 2px; border-top-width: 2px;"></div>
+        <div id="s1-tk2" class="tick" data-layout-ignore
+          style="right: 150px; bottom: 150px; border-right-width: 2px; border-bottom-width: 2px;"></div>
+        <div style="position: absolute; left: 210px; top: 372px;">
+          <div id="s1-kick" class="kicker" style="margin-bottom: 28px;">multi-account routing, proven</div>
+          <div id="s1-l1" class="h-thin">Run out of limit on one</div>
+          <div id="s1-l2" class="h-bold">account. <span class="accent">Land on the next.</span></div>
+          <div id="s1-sub" class="sub" style="margin-top: 34px; max-width: 1080px;">
+            A real end-to-end test, with the success path served by a live
+            <span style="color:#ece7dc">emulated Anthropic API</span> — no network, no real account.
+          </div>
+        </div>
+      </div>
+
+      <!-- ============ S2 — The chain + request ============ -->
+      <div id="s2" class="scene" data-layout-allow-overflow>
+        <div id="s2-glow" class="glow" data-layout-ignore style="left: 38%; top: 4%;"></div>
+        <div class="vignette" data-layout-ignore></div>
+        <div id="s2-tag" class="tag mono">CHAIN · default = [ a, b ]</div>
+
+        <div id="s2-cmd" class="term mono" style="left: 210px; top: 150px; width: 1500px;">
+          <div class="ln"><span class="prompt">$</span> claude-profiles run --chain default -- <span class="c-acc">-p</span> "say hi in 3 words"</div>
+        </div>
+
+        <!-- node a -->
+        <div id="s2-a" class="node" style="left: 250px; top: 430px;">
+          <div class="who">profile <span class="accent">a</span></div>
+          <div class="meta mono">priority 1 · ~/.claude-a</div>
+          <div class="state"><span class="dot green"></span> healthy</div>
+        </div>
+        <!-- node b -->
+        <div id="s2-b" class="node" style="left: 1240px; top: 430px;">
+          <div class="who">profile <span class="accent">b</span></div>
+          <div class="meta mono">priority 2 · ~/.claude-b</div>
+          <div class="state"><span class="dot green"></span> healthy</div>
+        </div>
+
+        <div id="s2-arrow" class="arrow" style="left: 690px; top: 510px; width: 540px;"></div>
+        <div id="s2-head" class="arrow-head" style="left: 1224px; top: 498px;"></div>
+
+        <div id="s2-cap" class="caption" style="left: 250px; top: 720px;">
+          The request enters the chain at <span style="color:#ece7dc">profile a</span> — the highest-priority
+          healthy account. Output is captured so the supervisor can classify it.
+        </div>
+      </div>
+
+      <!-- ============ S3 — limit + auto-failover ============ -->
+      <div id="s3" class="scene" data-layout-allow-overflow>
+        <div id="s3-glow" class="glow" data-layout-ignore style="left: 16%; top: 18%; background: radial-gradient(circle, rgba(242,181,58,0.22) 0%, rgba(242,181,58,0.06) 42%, rgba(242,181,58,0) 70%);"></div>
+        <div class="vignette" data-layout-ignore></div>
+        <div id="s3-tag" class="tag mono">CLASSIFY · usage limit → auto-failover</div>
+
+        <div id="s3-term" class="term mono" style="left: 210px; top: 160px; width: 980px;">
+          <div class="ln c-dim">profile a → claude -p …</div>
+          <div class="ln">{ "type":"result", <span class="c-red">"is_error":true</span>,</div>
+          <div class="ln">&nbsp;&nbsp;"result":"<span class="c-amb">Claude usage limit reached.</span>" }</div>
+          <div class="ln c-dim" style="margin-top:14px">exit 1</div>
+        </div>
+
+        <div id="s3-verdict" class="panel" style="left: 1250px; top: 160px; width: 460px; padding: 30px 34px;">
+          <div class="mono c-dim" style="font-size:22px; letter-spacing:0.16em;">CLASSIFIER</div>
+          <div style="font-size:30px; font-weight:700; margin-top:16px;">kind = <span class="c-amb">rate_limit</span></div>
+          <div class="mono" style="font-size:23px; color:var(--dim); margin-top:14px;">trigger: yes</div>
+          <div class="mono" style="font-size:23px; color:var(--dim); margin-top:6px;">cooldown a → 1h</div>
+        </div>
+
+        <div id="s3-pill" class="pill" style="left: 210px; top: 470px;">
+          <span class="glyph g-auto">▲</span> auto-failover (limit)
+        </div>
+
+        <div id="s3-down" class="node" style="left: 210px; top: 600px; width: 430px;">
+          <div class="who">profile <span class="accent">a</span></div>
+          <div class="state"><span class="dot amber"></span> cooling down · 1h</div>
+        </div>
+        <div id="s3-arrow" class="arrow amber" style="left: 650px; top: 690px; width: 560px;"></div>
+        <div id="s3-head" class="arrow-head amber" style="left: 1204px; top: 678px;"></div>
+        <div id="s3-up" class="node" style="left: 1250px; top: 600px; width: 430px;">
+          <div class="who">profile <span class="accent">b</span></div>
+          <div class="state"><span class="dot green"></span> healthy · next in chain</div>
+        </div>
+
+        <div id="s3-cap" class="caption" style="left: 210px; top: 850px;">
+          Only <span style="color:#ece7dc">rate-limit, server, and auth</span> failures reroute. A generic crash
+          surfaces to you untouched — no silent retry.
+        </div>
+      </div>
+
+      <!-- ============ S4 — b proxies to the emulated API ============ -->
+      <div id="s4" class="scene" data-layout-allow-overflow>
+        <div id="s4-glow" class="glow" data-layout-ignore style="left: 52%; top: 6%; background: radial-gradient(circle, rgba(95,208,138,0.20) 0%, rgba(95,208,138,0.05) 42%, rgba(95,208,138,0) 70%);"></div>
+        <div class="vignette" data-layout-ignore></div>
+        <div id="s4-tag" class="tag mono">PROFILE b · live emulated Anthropic API</div>
+        <div id="s4-live" class="live mono" style="right: 210px; top: 58px;"><span class="live-dot"></span> AGENT-EMULATE :4099</div>
+
+        <div id="s4-req" class="term mono" style="left: 210px; top: 168px; width: 1500px;">
+          <div class="ln"><span class="prompt">POST</span> <span class="c-acc">http://localhost:4099/v1/messages</span></div>
+          <div class="ln c-dim">x-api-key: test_token_admin · anthropic-version: 2023-06-01</div>
+          <div class="ln" style="margin-top:8px">{ "model":"claude-sonnet-4", "messages":[ { "role":"user",</div>
+          <div class="ln">&nbsp;&nbsp;"content":"say hi in 3 words" } ] }</div>
+        </div>
+
+        <div id="s4-200" class="badge http200" style="left: 210px; top: 442px;">200 OK · application/json</div>
+        <div id="s4-401" class="badge http401" style="left: 560px; top: 442px;">no key → 401</div>
+
+        <div id="s4-resp" class="term mono" style="left: 210px; top: 540px; width: 1500px;">
+          <div class="ln c-dim">{ "id":"msg_…", "role":"assistant", "model":"claude-sonnet-4",</div>
+          <div class="ln">&nbsp;&nbsp;"content":[ { "type":"text", "text":<span class="c-ok">"This is a canned response from the</span></div>
+          <div class="ln c-ok">&nbsp;&nbsp;&nbsp;agent-emulate Anthropic emulator. You said: …"</span> } ],</div>
+          <div class="ln c-dim">&nbsp;&nbsp;"stop_reason":"end_turn", "usage":{ "output_tokens":17 } }</div>
+        </div>
+
+        <div id="s4-cap" class="caption" style="left: 210px; top: 800px;">
+          Production-fidelity, not a stub: real Messages shape, real <span style="color:#ece7dc">x-api-key</span> auth.
+          The supervisor re-wraps it as the CLI's <span class="mono" style="color:#ece7dc">--output-format json</span> and
+          exits <span class="c-ok">0</span>.
+        </div>
+      </div>
+
+      <!-- ============ S5 — routing log + result ============ -->
+      <div id="s5" class="scene" data-layout-allow-overflow>
+        <div id="s5-glow" class="glow" data-layout-ignore style="left: 50%; top: 24%;"></div>
+        <div class="vignette" data-layout-ignore></div>
+        <div id="s5-ghost" class="ghost" data-layout-ignore style="font-size: 360px; right: -30px; top: 360px;">6/6</div>
+        <div id="s5-tag" class="tag mono">RECALLED ACROSS SESSIONS · routing-log.json</div>
+
+        <div id="s5-h" style="position:absolute; left:210px; top:150px;">
+          <div class="kicker" style="margin-bottom:20px;">claude-profiles chain log</div>
+          <div class="h-bold" style="font-size:96px;">The whole route, <span class="accent">on record.</span></div>
+        </div>
+
+        <div id="s5-r1" class="tl-row" style="left: 230px; top: 430px;">
+          <span class="tl-glyph g-launch">▸</span>
+          <span class="tl-route">launch &nbsp;·&nbsp; a</span>
+          <span class="tl-ago mono">[default] · just now</span>
+        </div>
+        <div id="s5-r2" class="tl-row" style="left: 230px; top: 510px;">
+          <span class="tl-glyph g-auto">▲</span>
+          <span class="tl-route">auto-failover (limit) &nbsp;·&nbsp; a ▸▸▸ b</span>
+          <span class="tl-ago mono">[default] · usage limit reached</span>
+        </div>
+        <div id="s5-r3" class="tl-row" style="left: 230px; top: 590px;">
+          <span class="tl-glyph g-launch">●</span>
+          <span class="tl-route" style="color:#5fd08a">served by b &nbsp;·&nbsp; exit 0</span>
+          <span class="tl-ago mono">emulated /v1/messages → 200</span>
+        </div>
+
+        <div id="s5-chip" class="badge http200" style="left: 230px; top: 690px; font-size:28px; padding:16px 28px;">e2e: 6 / 6 passed</div>
+
+        <div id="s5-lock" class="lock" style="left: 230px; top: 800px;">
+          <div class="lock-mark">cp</div>
+          <div class="lock-txt">npx <span class="accent">@vinniai/claude-profiles</span></div>
+        </div>
+        <div id="s5-sub" class="sub mono" style="position:absolute; left:230px; top:888px; font-size:24px;">
+          tests/e2e/test-fallback-emulated.sh
+        </div>
+      </div>
+
+      <div id="wash" data-layout-ignore></div>
+    </div>
+
+    <script>
+      window.__timelines = window.__timelines || {};
+      const tl = gsap.timeline({ paused: true });
+
+      // ---- ambient helpers ----
+      const breathe = (sel, t, dur, sc = 1.05) =>
+        tl.to(sel, { scale: sc, duration: dur, ease: "sine.inOut", yoyo: true, repeat: 1 }, t);
+      const drift = (sel, t, dur, dx, dy) =>
+        tl.to(sel, { x: dx, y: dy, duration: dur, ease: "sine.inOut", yoyo: true, repeat: 1 }, t);
+      const pulse = (sel, t, dur) =>
+        tl.to(sel, { scale: 1.035, duration: dur, ease: "sine.inOut", yoyo: true, repeat: 1 }, t);
+
+      // ===== Scene crossfades =====
+      tl.fromTo("#s1", { opacity: 0, scale: 1.05 },
+        { opacity: 1, scale: 1, duration: 0.6, ease: "power2.out" }, 0.0);
+
+      tl.fromTo("#s2", { opacity: 0, scale: 1.06, "--blur": "9px" },
+        { opacity: 1, scale: 1, "--blur": "0px", duration: 0.36, ease: "power3.out" }, 4.35);
+      tl.set("#s1", { opacity: 0 }, 4.80);
+
+      tl.fromTo("#s3", { opacity: 0, scale: 1.06, "--blur": "9px" },
+        { opacity: 1, scale: 1, "--blur": "0px", duration: 0.36, ease: "power3.out" }, 9.15);
+      tl.set("#s2", { opacity: 0 }, 9.60);
+
+      tl.fromTo("#s4", { opacity: 0, scale: 1.06, "--blur": "9px" },
+        { opacity: 1, scale: 1, "--blur": "0px", duration: 0.36, ease: "power3.out" }, 14.05);
+      tl.set("#s3", { opacity: 0 }, 14.50);
+
+      tl.fromTo("#wash", { opacity: 0 }, { opacity: 0.5, duration: 0.2, ease: "power2.in" }, 18.15);
+      tl.to("#wash", { opacity: 0, duration: 0.5, ease: "power2.out" }, 18.35);
+      tl.fromTo("#s5", { opacity: 0, scale: 1.07 },
+        { opacity: 1, scale: 1, duration: 0.44, ease: "power3.out" }, 18.22);
+      tl.set("#s4", { opacity: 0 }, 18.72);
+
+      /* ===== S1 — cold open ===== */
+      tl.fromTo("#s1-kick", { opacity: 0, y: 24 }, { opacity: 1, y: 0, duration: 0.5, ease: "power2.out" }, 0.30);
+      tl.fromTo("#s1-l1", { opacity: 0, y: 42 }, { opacity: 1, y: 0, duration: 0.6, ease: "power3.out" }, 0.55);
+      tl.fromTo("#s1-l2", { opacity: 0, scale: 0.88, y: 30 },
+        { opacity: 1, scale: 1, y: 0, duration: 0.55, ease: "expo.out" }, 1.05);
+      tl.fromTo("#s1-sub", { opacity: 0, y: 24 }, { opacity: 1, y: 0, duration: 0.6, ease: "power2.out" }, 1.55);
+      tl.fromTo("#s1-tag", { opacity: 0, x: -26 }, { opacity: 1, x: 0, duration: 0.6, ease: "power2.out" }, 0.7);
+      tl.fromTo([ "#s1-tk1", "#s1-tk2" ], { opacity: 0 }, { opacity: 0.55, duration: 0.6, ease: "sine.out" }, 1.2);
+      tl.fromTo("#s1-ghost", { opacity: 0 }, { opacity: 1, duration: 1.0, ease: "sine.out" }, 0.2);
+      breathe("#s1-glow", 0.4, 4.0, 1.06);
+      drift("#s1-ghost", 0.6, 4.0, 26, -8);
+
+      /* ===== S2 — chain + request ===== */
+      tl.fromTo("#s2-tag", { opacity: 0, x: -24 }, { opacity: 1, x: 0, duration: 0.5, ease: "power2.out" }, 4.55);
+      tl.fromTo("#s2-cmd", { opacity: 0, y: 26 }, { opacity: 1, y: 0, duration: 0.5, ease: "power3.out" }, 4.7);
+      tl.fromTo("#s2-a", { opacity: 0, y: 34, scale: 0.96 },
+        { opacity: 1, y: 0, scale: 1, duration: 0.5, ease: "power3.out" }, 5.25);
+      tl.fromTo("#s2-arrow", { scaleX: 0, opacity: 0 }, { scaleX: 1, opacity: 1, duration: 0.5, ease: "power2.out" }, 5.7);
+      tl.fromTo("#s2-head", { opacity: 0, x: -16 }, { opacity: 1, x: 0, duration: 0.3, ease: "power2.out" }, 6.05);
+      tl.fromTo("#s2-b", { opacity: 0, y: 34, scale: 0.96 },
+        { opacity: 1, y: 0, scale: 1, duration: 0.5, ease: "power3.out" }, 6.0);
+      tl.fromTo("#s2-cap", { opacity: 0, y: 28 }, { opacity: 1, y: 0, duration: 0.5, ease: "power3.out" }, 6.5);
+      pulse("#s2-a", 6.4, 2.4);
+      breathe("#s2-glow", 4.6, 4.4, 1.05);
+
+      /* ===== S3 — limit → auto-failover ===== */
+      tl.fromTo("#s3-tag", { opacity: 0, x: -24 }, { opacity: 1, x: 0, duration: 0.5, ease: "power2.out" }, 9.35);
+      tl.fromTo("#s3-term", { opacity: 0, y: 26 }, { opacity: 1, y: 0, duration: 0.5, ease: "power3.out" }, 9.5);
+      tl.fromTo("#s3-verdict", { opacity: 0, x: 30 }, { opacity: 1, x: 0, duration: 0.5, ease: "power3.out" }, 10.1);
+      tl.fromTo("#s3-pill", { opacity: 0, scale: 0.9 }, { opacity: 1, scale: 1, duration: 0.45, ease: "back.out(2)" }, 10.7);
+      tl.fromTo("#s3-down", { opacity: 0, y: 30 }, { opacity: 1, y: 0, duration: 0.45, ease: "power3.out" }, 11.1);
+      tl.fromTo("#s3-arrow", { scaleX: 0, opacity: 0 }, { scaleX: 1, opacity: 1, duration: 0.5, ease: "power2.out" }, 11.45);
+      tl.fromTo("#s3-head", { opacity: 0, x: -16 }, { opacity: 1, x: 0, duration: 0.3, ease: "power2.out" }, 11.8);
+      tl.fromTo("#s3-up", { opacity: 0, y: 30 }, { opacity: 1, y: 0, duration: 0.45, ease: "power3.out" }, 11.7);
+      tl.fromTo("#s3-cap", { opacity: 0, y: 28 }, { opacity: 1, y: 0, duration: 0.5, ease: "power3.out" }, 12.2);
+      pulse("#s3-pill", 11.2, 2.6);
+
+      /* ===== S4 — emulated API ===== */
+      tl.fromTo("#s4-tag", { opacity: 0, x: -24 }, { opacity: 1, x: 0, duration: 0.5, ease: "power2.out" }, 14.25);
+      tl.fromTo("#s4-live", { opacity: 0, x: 24 }, { opacity: 1, x: 0, duration: 0.5, ease: "power2.out" }, 14.3);
+      tl.fromTo("#s4-req", { opacity: 0, y: 26 }, { opacity: 1, y: 0, duration: 0.5, ease: "power3.out" }, 14.5);
+      tl.fromTo("#s4-200", { opacity: 0, scale: 0.9 }, { opacity: 1, scale: 1, duration: 0.4, ease: "back.out(2)" }, 15.1);
+      tl.fromTo("#s4-401", { opacity: 0, scale: 0.9 }, { opacity: 1, scale: 1, duration: 0.4, ease: "back.out(2)" }, 15.35);
+      tl.fromTo("#s4-resp", { opacity: 0, y: 26 }, { opacity: 1, y: 0, duration: 0.5, ease: "power3.out" }, 15.6);
+      tl.fromTo("#s4-cap", { opacity: 0, y: 28 }, { opacity: 1, y: 0, duration: 0.5, ease: "power3.out" }, 16.4);
+      tl.to("#s4-live .live-dot", { opacity: 0.25, duration: 0.5, ease: "sine.inOut", yoyo: true, repeat: 5 }, 14.4);
+      pulse("#s4-200", 15.3, 2.6);
+
+      /* ===== S5 — routing log + result ===== */
+      tl.fromTo("#s5-tag", { opacity: 0, x: -24 }, { opacity: 1, x: 0, duration: 0.5, ease: "power2.out" }, 18.45);
+      tl.fromTo("#s5-h", { opacity: 0, y: 30 }, { opacity: 1, y: 0, duration: 0.55, ease: "power3.out" }, 18.6);
+      tl.fromTo("#s5-r1", { opacity: 0, x: -24 }, { opacity: 1, x: 0, duration: 0.4, ease: "power2.out" }, 19.2);
+      tl.fromTo("#s5-r2", { opacity: 0, x: -24 }, { opacity: 1, x: 0, duration: 0.4, ease: "power2.out" }, 19.5);
+      tl.fromTo("#s5-r3", { opacity: 0, x: -24 }, { opacity: 1, x: 0, duration: 0.4, ease: "power2.out" }, 19.8);
+      tl.fromTo("#s5-chip", { opacity: 0, scale: 0.9 }, { opacity: 1, scale: 1, duration: 0.45, ease: "back.out(2)" }, 20.2);
+      tl.fromTo("#s5-lock", { opacity: 0, y: 28 }, { opacity: 1, y: 0, duration: 0.5, ease: "power3.out" }, 20.6);
+      tl.fromTo("#s5-sub", { opacity: 0, y: 20 }, { opacity: 1, y: 0, duration: 0.5, ease: "power2.out" }, 20.95);
+      tl.fromTo("#s5-ghost", { opacity: 0 }, { opacity: 1, duration: 1.1, ease: "sine.out" }, 18.7);
+      breathe("#s5-glow", 18.7, 3.8, 1.07);
+      drift("#s5-ghost", 19.0, 3.6, -20, 8);
+      pulse("#s5-chip", 20.6, 2.2);
+      tl.to("#s5-glow", { opacity: 0.7, duration: 0.8, ease: "sine.inOut" }, 22.0);
+
+      window.__timelines["main"] = tl;
+    </script>
+  </body>
+</html>

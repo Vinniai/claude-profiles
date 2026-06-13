@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 
-# Integration test script for jean-claude
-# This script sets up a local git repo and tests jean-claude's functionality and edge cases
+# Integration test script for claude-profiles
+# This script sets up a local git repo and tests claude-profiles's functionality and edge cases
 #
 # The script tests:
 # - init command (new repos, existing repos, already initialized)
@@ -15,7 +15,7 @@
 # - Metadata (persistence, timestamp updates)
 #
 # Note: Some tests may fail due to git merge conflicts and divergent branches,
-# which are legitimate edge cases that reveal areas for improvement in jean-claude.
+# which are legitimate edge cases that reveal areas for improvement in claude-profiles.
 
 # Don't exit on error - we want to see all test results
 # set -e
@@ -38,7 +38,7 @@ REMOTE_REPO=""
 MACHINE1_DIR=""
 MACHINE2_DIR=""
 MACHINE3_DIR=""
-JEAN_CLAUDE_BIN=""
+CLAUDE_PROFILES_BIN=""
 
 # Cleanup function
 cleanup() {
@@ -128,7 +128,7 @@ setup_test_environment() {
     print_header "Setting up test environment"
 
     # Create temporary test directory
-    TEST_DIR=$(mktemp -d -t jean-claude-test.XXXXXX)
+    TEST_DIR=$(mktemp -d -t claude-profiles-test.XXXXXX)
     print_info "Created test directory: $TEST_DIR"
 
     # Create a bare git repository to act as remote
@@ -140,7 +140,7 @@ setup_test_environment() {
         git init > /dev/null 2>&1
         git config user.email "test@example.com"
         git config user.name "Test User"
-        echo '{"version":"1.1.0","managedBy":"jean-claude","lastSync":null,"machineId":"test-setup","platform":"linux","claudeConfigPath":"/test"}' > meta.json
+        echo '{"version":"1.1.0","managedBy":"claude-profiles","lastSync":null,"machineId":"test-setup","platform":"linux","claudeConfigPath":"/test"}' > meta.json
         git add meta.json
         git commit -m "Initial commit" > /dev/null 2>&1
     )
@@ -158,27 +158,27 @@ setup_test_environment() {
     mkdir -p "$MACHINE3_DIR/.claude"
     print_info "Created machine directories (machine1, machine2, machine3)"
 
-    # Build jean-claude
-    print_info "Building jean-claude..."
+    # Build claude-profiles
+    print_info "Building claude-profiles..."
     cd "$(dirname "$0")"
     npm run build > /dev/null 2>&1
 
-    # Get the jean-claude binary path
-    JEAN_CLAUDE_BIN="$(pwd)/dist/index.js"
-    if [ ! -f "$JEAN_CLAUDE_BIN" ]; then
-        echo -e "${RED}Error: jean-claude binary not found at $JEAN_CLAUDE_BIN${NC}"
+    # Get the claude-profiles binary path
+    CLAUDE_PROFILES_BIN="$(pwd)/dist/index.js"
+    if [ ! -f "$CLAUDE_PROFILES_BIN" ]; then
+        echo -e "${RED}Error: claude-profiles binary not found at $CLAUDE_PROFILES_BIN${NC}"
         exit 1
     fi
-    print_info "Jean-claude binary: $JEAN_CLAUDE_BIN"
+    print_info "claude-profiles binary: $CLAUDE_PROFILES_BIN"
 
     print_success "Test environment setup complete"
 }
 
-# Helper function to run jean-claude commands
-run_jean_claude() {
+# Helper function to run claude-profiles commands
+run_claude_profiles() {
     local machine_dir=$1
     shift
-    XDG_CONFIG_HOME="$machine_dir" HOME="$machine_dir" GIT_AUTHOR_NAME="Test User" GIT_AUTHOR_EMAIL="test@example.com" GIT_COMMITTER_NAME="Test User" GIT_COMMITTER_EMAIL="test@example.com" node "$JEAN_CLAUDE_BIN" "$@"
+    XDG_CONFIG_HOME="$machine_dir" HOME="$machine_dir" GIT_AUTHOR_NAME="Test User" GIT_AUTHOR_EMAIL="test@example.com" GIT_COMMITTER_NAME="Test User" GIT_COMMITTER_EMAIL="test@example.com" node "$CLAUDE_PROFILES_BIN" "$@"
 }
 
 # Test init command
@@ -186,23 +186,23 @@ test_init_new_repo() {
     print_test "init command with new repository"
 
     # Initialize with --sync and --url flags (non-interactive)
-    run_jean_claude "$MACHINE1_DIR" init --sync --url "$REMOTE_REPO"
+    run_claude_profiles "$MACHINE1_DIR" init --sync --url "$REMOTE_REPO"
 
-    assert_dir_exists "$MACHINE1_DIR/.claude/.jean-claude"
-    assert_dir_exists "$MACHINE1_DIR/.claude/.jean-claude/.git"
-    assert_file_exists "$MACHINE1_DIR/.claude/.jean-claude/meta.json"
+    assert_dir_exists "$MACHINE1_DIR/.claude/.claude-profiles"
+    assert_dir_exists "$MACHINE1_DIR/.claude/.claude-profiles/.git"
+    assert_file_exists "$MACHINE1_DIR/.claude/.claude-profiles/meta.json"
 
     # Check meta.json contains valid data
-    assert_file_contains "$MACHINE1_DIR/.claude/.jean-claude/meta.json" "machineId"
-    assert_file_contains "$MACHINE1_DIR/.claude/.jean-claude/meta.json" "version"
-    assert_file_contains "$MACHINE1_DIR/.claude/.jean-claude/meta.json" "platform"
+    assert_file_contains "$MACHINE1_DIR/.claude/.claude-profiles/meta.json" "machineId"
+    assert_file_contains "$MACHINE1_DIR/.claude/.claude-profiles/meta.json" "version"
+    assert_file_contains "$MACHINE1_DIR/.claude/.claude-profiles/meta.json" "platform"
 }
 
 test_init_already_initialized() {
     print_test "init command when already initialized"
 
     # Should detect and report that it's already initialized
-    if run_jean_claude "$MACHINE1_DIR" init 2>&1 | grep -q "Already initialized"; then
+    if run_claude_profiles "$MACHINE1_DIR" init 2>&1 | grep -q "Already initialized"; then
         print_success "Correctly detected already initialized"
     else
         print_failure "Did not detect already initialized state"
@@ -213,10 +213,10 @@ test_init_with_existing_repo() {
     print_test "init command with existing remote repository"
 
     # Machine 2 should clone the existing repo created by machine 1
-    run_jean_claude "$MACHINE2_DIR" init --sync --url "$REMOTE_REPO"
+    run_claude_profiles "$MACHINE2_DIR" init --sync --url "$REMOTE_REPO"
 
-    assert_dir_exists "$MACHINE2_DIR/.claude/.jean-claude"
-    assert_file_exists "$MACHINE2_DIR/.claude/.jean-claude/meta.json"
+    assert_dir_exists "$MACHINE2_DIR/.claude/.claude-profiles"
+    assert_file_exists "$MACHINE2_DIR/.claude/.claude-profiles/meta.json"
 }
 
 test_init_invalid_remote() {
@@ -226,7 +226,7 @@ test_init_invalid_remote() {
     mkdir -p "$INVALID_MACHINE_DIR/.claude"
 
     # Should fail with invalid remote
-    if run_jean_claude "$INVALID_MACHINE_DIR" init --sync --url "/invalid/repo/path" 2>&1; then
+    if run_claude_profiles "$INVALID_MACHINE_DIR" init --sync --url "/invalid/repo/path" 2>&1; then
         print_failure "Should have failed with invalid remote"
     else
         print_success "Correctly failed with invalid remote"
@@ -245,15 +245,15 @@ test_push_initial_files() {
     chmod +x "$MACHINE1_DIR/.claude/hooks/test-hook.sh"
 
     # Push the files
-    run_jean_claude "$MACHINE1_DIR" sync push
+    run_claude_profiles "$MACHINE1_DIR" sync push
 
-    # Verify files are in the jean-claude repo
-    assert_file_exists "$MACHINE1_DIR/.claude/.jean-claude/CLAUDE.md"
-    assert_file_exists "$MACHINE1_DIR/.claude/.jean-claude/settings.json"
-    assert_file_exists "$MACHINE1_DIR/.claude/.jean-claude/hooks/test-hook.sh"
+    # Verify files are in the claude-profiles repo
+    assert_file_exists "$MACHINE1_DIR/.claude/.claude-profiles/CLAUDE.md"
+    assert_file_exists "$MACHINE1_DIR/.claude/.claude-profiles/settings.json"
+    assert_file_exists "$MACHINE1_DIR/.claude/.claude-profiles/hooks/test-hook.sh"
 
     # Verify commit was made
-    cd "$MACHINE1_DIR/.claude/.jean-claude"
+    cd "$MACHINE1_DIR/.claude/.claude-profiles"
     if git log --oneline | grep -q "Update from"; then
         print_success "Commit created with correct message"
     else
@@ -266,7 +266,7 @@ test_push_no_changes() {
     print_test "push command with no changes"
 
     # Push again without changes
-    if run_jean_claude "$MACHINE1_DIR" sync push 2>&1 | grep -q "No changes"; then
+    if run_claude_profiles "$MACHINE1_DIR" sync push 2>&1 | grep -q "No changes"; then
         print_success "Correctly detected no changes"
     else
         # It's okay if it just completes without error
@@ -280,10 +280,10 @@ test_push_modified_files() {
     # Modify a file
     echo "# Updated Custom Instructions" > "$MACHINE1_DIR/.claude/CLAUDE.md"
 
-    run_jean_claude "$MACHINE1_DIR" sync push
+    run_claude_profiles "$MACHINE1_DIR" sync push
 
     # Verify the change is in the repo
-    if grep -q "Updated Custom Instructions" "$MACHINE1_DIR/.claude/.jean-claude/CLAUDE.md"; then
+    if grep -q "Updated Custom Instructions" "$MACHINE1_DIR/.claude/.claude-profiles/CLAUDE.md"; then
         print_success "Modified file pushed successfully"
     else
         print_failure "Modified file not pushed"
@@ -297,9 +297,9 @@ test_push_new_hook() {
     echo "#!/bin/bash\necho 'new hook'" > "$MACHINE1_DIR/.claude/hooks/new-hook.sh"
     chmod +x "$MACHINE1_DIR/.claude/hooks/new-hook.sh"
 
-    run_jean_claude "$MACHINE1_DIR" sync push
+    run_claude_profiles "$MACHINE1_DIR" sync push
 
-    assert_file_exists "$MACHINE1_DIR/.claude/.jean-claude/hooks/new-hook.sh"
+    assert_file_exists "$MACHINE1_DIR/.claude/.claude-profiles/hooks/new-hook.sh"
 }
 
 # Test pull command
@@ -307,7 +307,7 @@ test_pull_basic() {
     print_test "pull command to sync files"
 
     # Pull on machine2 should get the files from machine1
-    run_jean_claude "$MACHINE2_DIR" sync pull --force
+    run_claude_profiles "$MACHINE2_DIR" sync pull --force
 
     assert_file_exists "$MACHINE2_DIR/.claude/CLAUDE.md"
     assert_file_exists "$MACHINE2_DIR/.claude/settings.json"
@@ -329,7 +329,7 @@ test_pull_overwrites_local() {
     echo "# Local changes" > "$MACHINE2_DIR/.claude/CLAUDE.md"
 
     # Pull should overwrite
-    run_jean_claude "$MACHINE2_DIR" sync pull --force --force
+    run_claude_profiles "$MACHINE2_DIR" sync pull --force --force
 
     if grep -q "Updated Custom Instructions" "$MACHINE2_DIR/.claude/CLAUDE.md"; then
         print_success "Local changes overwritten by pull"
@@ -344,7 +344,7 @@ test_pull_not_initialized() {
     MACHINE4_DIR="$TEST_DIR/machine4"
     mkdir -p "$MACHINE4_DIR/.claude"
 
-    if run_jean_claude "$MACHINE4_DIR" sync pull --force 2>&1 | grep -q "not initialized"; then
+    if run_claude_profiles "$MACHINE4_DIR" sync pull --force 2>&1 | grep -q "not initialized"; then
         print_success "Correctly detected not initialized"
     else
         print_failure "Did not detect not initialized state"
@@ -355,7 +355,7 @@ test_pull_not_initialized() {
 test_status_clean() {
     print_test "status command with clean state"
 
-    output=$(run_jean_claude "$MACHINE1_DIR" sync status 2>&1 || true)
+    output=$(run_claude_profiles "$MACHINE1_DIR" sync status 2>&1 || true)
 
     if echo "$output" | grep -q "Status"; then
         print_success "Status command executed"
@@ -370,7 +370,7 @@ test_status_with_changes() {
     # Make a change without pushing
     echo '{"theme": "light"}' > "$MACHINE1_DIR/.claude/settings.json"
 
-    output=$(run_jean_claude "$MACHINE1_DIR" sync status 2>&1 || true)
+    output=$(run_claude_profiles "$MACHINE1_DIR" sync status 2>&1 || true)
 
     if echo "$output" | grep -q "settings.json"; then
         print_success "Status shows changed file"
@@ -385,7 +385,7 @@ test_status_not_initialized() {
     MACHINE5_DIR="$TEST_DIR/machine5"
     mkdir -p "$MACHINE5_DIR/.claude"
 
-    if run_jean_claude "$MACHINE5_DIR" sync status 2>&1 | grep -q "not initialized"; then
+    if run_claude_profiles "$MACHINE5_DIR" sync status 2>&1 | grep -q "not initialized"; then
         print_success "Correctly detected not initialized"
     else
         print_failure "Did not detect not initialized state"
@@ -397,10 +397,10 @@ test_bidirectional_sync() {
     print_test "bidirectional sync between machines"
 
     # Push the light theme from machine1
-    run_jean_claude "$MACHINE1_DIR" sync push
+    run_claude_profiles "$MACHINE1_DIR" sync push
 
     # Pull on machine2
-    run_jean_claude "$MACHINE2_DIR" sync pull --force
+    run_claude_profiles "$MACHINE2_DIR" sync pull --force
 
     # Verify machine2 has the light theme
     if grep -q "light" "$MACHINE2_DIR/.claude/settings.json"; then
@@ -414,10 +414,10 @@ test_bidirectional_sync() {
     echo "#!/bin/bash\necho 'from machine2'" > "$MACHINE2_DIR/.claude/hooks/machine2-hook.sh"
     chmod +x "$MACHINE2_DIR/.claude/hooks/machine2-hook.sh"
 
-    run_jean_claude "$MACHINE2_DIR" sync push
+    run_claude_profiles "$MACHINE2_DIR" sync push
 
     # Pull on machine1
-    run_jean_claude "$MACHINE1_DIR" sync pull --force
+    run_claude_profiles "$MACHINE1_DIR" sync pull --force
 
     # Verify machine1 has the new hook
     assert_file_exists "$MACHINE1_DIR/.claude/hooks/machine2-hook.sh"
@@ -428,15 +428,15 @@ test_three_machine_init() {
     print_test "initialize third machine from existing remote"
 
     # Machine 3 initializes from the same remote
-    run_jean_claude "$MACHINE3_DIR" init --sync --url "$REMOTE_REPO"
+    run_claude_profiles "$MACHINE3_DIR" init --sync --url "$REMOTE_REPO"
 
-    assert_dir_exists "$MACHINE3_DIR/.claude/.jean-claude"
-    assert_file_exists "$MACHINE3_DIR/.claude/.jean-claude/meta.json"
+    assert_dir_exists "$MACHINE3_DIR/.claude/.claude-profiles"
+    assert_file_exists "$MACHINE3_DIR/.claude/.claude-profiles/meta.json"
 
     # Verify machine 3 has a machine ID (it may be the same as others when
     # running tests on a single physical machine, since IDs are based on hostname)
     # Use grep -E to handle pretty-printed JSON with spaces
-    machine3_id=$(grep -oE '"machineId"[[:space:]]*:[[:space:]]*"[^"]*"' "$MACHINE3_DIR/.claude/.jean-claude/meta.json" | sed 's/.*: *"//' | sed 's/"$//')
+    machine3_id=$(grep -oE '"machineId"[[:space:]]*:[[:space:]]*"[^"]*"' "$MACHINE3_DIR/.claude/.claude-profiles/meta.json" | sed 's/.*: *"//' | sed 's/"$//')
 
     if [ -n "$machine3_id" ]; then
         print_success "Machine 3 has a valid machine ID"
@@ -451,14 +451,14 @@ test_three_machine_chain_sync() {
     # Machine 1 creates a unique file in skills (which is synced)
     mkdir -p "$MACHINE1_DIR/.claude/skills"
     echo "# Created on Machine 1 for chain sync test" > "$MACHINE1_DIR/.claude/skills/chain-test.md"
-    run_jean_claude "$MACHINE1_DIR" sync push
+    run_claude_profiles "$MACHINE1_DIR" sync push
 
     # Machine 2 pulls and verifies
-    run_jean_claude "$MACHINE2_DIR" sync pull --force
+    run_claude_profiles "$MACHINE2_DIR" sync pull --force
     assert_file_exists "$MACHINE2_DIR/.claude/skills/chain-test.md"
 
     # Machine 3 pulls and verifies
-    run_jean_claude "$MACHINE3_DIR" sync pull --force
+    run_claude_profiles "$MACHINE3_DIR" sync pull --force
     assert_file_exists "$MACHINE3_DIR/.claude/skills/chain-test.md"
 
     # Verify content is the same across all machines
@@ -475,22 +475,22 @@ test_three_machine_convergence() {
     # Machine 1 creates and pushes its file in skills (which is synced)
     mkdir -p "$MACHINE1_DIR/.claude/skills"
     echo "# File from Machine 1" > "$MACHINE1_DIR/.claude/skills/from-m1.md"
-    run_jean_claude "$MACHINE1_DIR" sync push
+    run_claude_profiles "$MACHINE1_DIR" sync push
 
     # Machine 2 pulls (gets m1's file), creates its own file, then pushes
-    run_jean_claude "$MACHINE2_DIR" sync pull --force
+    run_claude_profiles "$MACHINE2_DIR" sync pull --force
     echo "# File from Machine 2" > "$MACHINE2_DIR/.claude/skills/from-m2.md"
-    run_jean_claude "$MACHINE2_DIR" sync push
+    run_claude_profiles "$MACHINE2_DIR" sync push
 
     # Machine 3 pulls (gets m1 and m2's files), creates its own file, then pushes
-    run_jean_claude "$MACHINE3_DIR" sync pull --force
+    run_claude_profiles "$MACHINE3_DIR" sync pull --force
     echo "# File from Machine 3" > "$MACHINE3_DIR/.claude/skills/from-m3.md"
-    run_jean_claude "$MACHINE3_DIR" sync push
+    run_claude_profiles "$MACHINE3_DIR" sync push
 
     # Final pull on all machines to converge
-    run_jean_claude "$MACHINE1_DIR" sync pull --force
-    run_jean_claude "$MACHINE2_DIR" sync pull --force
-    run_jean_claude "$MACHINE3_DIR" sync pull --force
+    run_claude_profiles "$MACHINE1_DIR" sync pull --force
+    run_claude_profiles "$MACHINE2_DIR" sync pull --force
+    run_claude_profiles "$MACHINE3_DIR" sync pull --force
 
     # Verify all machines have all 3 files
     local all_synced=true
@@ -514,22 +514,22 @@ test_three_machine_sequential_modifications() {
     # Start with a shared file in skills (which is synced)
     mkdir -p "$MACHINE1_DIR/.claude/skills"
     echo "Version 1: From Machine 1" > "$MACHINE1_DIR/.claude/skills/shared-doc.md"
-    run_jean_claude "$MACHINE1_DIR" sync push
+    run_claude_profiles "$MACHINE1_DIR" sync push
 
     # Machine 2 pulls, modifies, and pushes
-    run_jean_claude "$MACHINE2_DIR" sync pull --force
+    run_claude_profiles "$MACHINE2_DIR" sync pull --force
     echo "Version 2: Modified by Machine 2" > "$MACHINE2_DIR/.claude/skills/shared-doc.md"
-    run_jean_claude "$MACHINE2_DIR" sync push
+    run_claude_profiles "$MACHINE2_DIR" sync push
 
     # Machine 3 pulls, modifies, and pushes
-    run_jean_claude "$MACHINE3_DIR" sync pull --force
+    run_claude_profiles "$MACHINE3_DIR" sync pull --force
     echo "Version 3: Modified by Machine 3" > "$MACHINE3_DIR/.claude/skills/shared-doc.md"
-    run_jean_claude "$MACHINE3_DIR" sync push
+    run_claude_profiles "$MACHINE3_DIR" sync push
 
     # All machines pull the latest
-    run_jean_claude "$MACHINE1_DIR" sync pull --force
-    run_jean_claude "$MACHINE2_DIR" sync pull --force
-    run_jean_claude "$MACHINE3_DIR" sync pull --force
+    run_claude_profiles "$MACHINE1_DIR" sync pull --force
+    run_claude_profiles "$MACHINE2_DIR" sync pull --force
+    run_claude_profiles "$MACHINE3_DIR" sync pull --force
 
     # Verify all machines have the final version
     local all_have_v3=true
@@ -549,29 +549,29 @@ test_three_machine_concurrent_different_files() {
     print_test "concurrent modifications to different files from 3 machines"
 
     # Pull latest state first to start clean
-    run_jean_claude "$MACHINE1_DIR" sync pull --force
-    run_jean_claude "$MACHINE2_DIR" sync pull --force
-    run_jean_claude "$MACHINE3_DIR" sync pull --force
+    run_claude_profiles "$MACHINE1_DIR" sync pull --force
+    run_claude_profiles "$MACHINE2_DIR" sync pull --force
+    run_claude_profiles "$MACHINE3_DIR" sync pull --force
 
     # Machine 1 creates its file in skills and pushes
     mkdir -p "$MACHINE1_DIR/.claude/skills"
     echo "# Concurrent edit from M1" > "$MACHINE1_DIR/.claude/skills/concurrent-m1.md"
-    run_jean_claude "$MACHINE1_DIR" sync push
+    run_claude_profiles "$MACHINE1_DIR" sync push
 
     # Machine 2 pulls (gets m1's file), creates its file, pushes
-    run_jean_claude "$MACHINE2_DIR" sync pull --force
+    run_claude_profiles "$MACHINE2_DIR" sync pull --force
     echo "# Concurrent edit from M2" > "$MACHINE2_DIR/.claude/skills/concurrent-m2.md"
-    run_jean_claude "$MACHINE2_DIR" sync push
+    run_claude_profiles "$MACHINE2_DIR" sync push
 
     # Machine 3 pulls (gets m1 and m2's files), creates its file, pushes
-    run_jean_claude "$MACHINE3_DIR" sync pull --force
+    run_claude_profiles "$MACHINE3_DIR" sync pull --force
     echo "# Concurrent edit from M3" > "$MACHINE3_DIR/.claude/skills/concurrent-m3.md"
-    run_jean_claude "$MACHINE3_DIR" sync push
+    run_claude_profiles "$MACHINE3_DIR" sync push
 
     # Final sync - all machines pull
-    run_jean_claude "$MACHINE1_DIR" sync pull --force
-    run_jean_claude "$MACHINE2_DIR" sync pull --force
-    run_jean_claude "$MACHINE3_DIR" sync pull --force
+    run_claude_profiles "$MACHINE1_DIR" sync pull --force
+    run_claude_profiles "$MACHINE2_DIR" sync pull --force
+    run_claude_profiles "$MACHINE3_DIR" sync pull --force
 
     # Check that all 3 files exist on all machines
     local all_files_present=true
@@ -596,22 +596,22 @@ test_three_machine_hooks_sync() {
     # Machine 1 creates hooks
     mkdir -p "$MACHINE1_DIR/.claude/hooks"
     echo "#!/bin/bash\necho 'hook from m1'" > "$MACHINE1_DIR/.claude/hooks/m1-hook.sh"
-    run_jean_claude "$MACHINE1_DIR" sync push
+    run_claude_profiles "$MACHINE1_DIR" sync push
 
     # Machine 2 creates additional hooks
-    run_jean_claude "$MACHINE2_DIR" sync pull --force
+    run_claude_profiles "$MACHINE2_DIR" sync pull --force
     echo "#!/bin/bash\necho 'hook from m2'" > "$MACHINE2_DIR/.claude/hooks/m2-hook.sh"
-    run_jean_claude "$MACHINE2_DIR" sync push
+    run_claude_profiles "$MACHINE2_DIR" sync push
 
     # Machine 3 creates additional hooks
-    run_jean_claude "$MACHINE3_DIR" sync pull --force
+    run_claude_profiles "$MACHINE3_DIR" sync pull --force
     echo "#!/bin/bash\necho 'hook from m3'" > "$MACHINE3_DIR/.claude/hooks/m3-hook.sh"
-    run_jean_claude "$MACHINE3_DIR" sync push
+    run_claude_profiles "$MACHINE3_DIR" sync push
 
     # Final pull on all machines
-    run_jean_claude "$MACHINE1_DIR" sync pull --force
-    run_jean_claude "$MACHINE2_DIR" sync pull --force
-    run_jean_claude "$MACHINE3_DIR" sync pull --force
+    run_claude_profiles "$MACHINE1_DIR" sync pull --force
+    run_claude_profiles "$MACHINE2_DIR" sync pull --force
+    run_claude_profiles "$MACHINE3_DIR" sync pull --force
 
     # Verify all machines have all hooks
     local all_hooks_present=true
@@ -635,23 +635,23 @@ test_three_machine_skills_sync() {
     # Machine 1 creates skills
     mkdir -p "$MACHINE1_DIR/.claude/skills"
     echo "# Skill from Machine 1" > "$MACHINE1_DIR/.claude/skills/skill-m1.md"
-    run_jean_claude "$MACHINE1_DIR" sync push
+    run_claude_profiles "$MACHINE1_DIR" sync push
 
     # Machine 2 creates additional skills
-    run_jean_claude "$MACHINE2_DIR" sync pull --force
+    run_claude_profiles "$MACHINE2_DIR" sync pull --force
     mkdir -p "$MACHINE2_DIR/.claude/skills/nested"
     echo "# Nested Skill from Machine 2" > "$MACHINE2_DIR/.claude/skills/nested/skill-m2.md"
-    run_jean_claude "$MACHINE2_DIR" sync push
+    run_claude_profiles "$MACHINE2_DIR" sync push
 
     # Machine 3 creates additional skills
-    run_jean_claude "$MACHINE3_DIR" sync pull --force
+    run_claude_profiles "$MACHINE3_DIR" sync pull --force
     echo "# Skill from Machine 3" > "$MACHINE3_DIR/.claude/skills/skill-m3.md"
-    run_jean_claude "$MACHINE3_DIR" sync push
+    run_claude_profiles "$MACHINE3_DIR" sync push
 
     # Final pull on all machines
-    run_jean_claude "$MACHINE1_DIR" sync pull --force
-    run_jean_claude "$MACHINE2_DIR" sync pull --force
-    run_jean_claude "$MACHINE3_DIR" sync pull --force
+    run_claude_profiles "$MACHINE1_DIR" sync pull --force
+    run_claude_profiles "$MACHINE2_DIR" sync pull --force
+    run_claude_profiles "$MACHINE3_DIR" sync pull --force
 
     # Verify all machines have all skills
     local all_skills_present=true
@@ -683,10 +683,10 @@ test_three_machine_late_joiner() {
     mkdir -p "$MACHINE4_DIR/.claude"
 
     # Machine4 initializes (joining late)
-    run_jean_claude "$MACHINE4_DIR" init --sync --url "$REMOTE_REPO"
+    run_claude_profiles "$MACHINE4_DIR" init --sync --url "$REMOTE_REPO"
 
     # Pull to get all existing content
-    run_jean_claude "$MACHINE4_DIR" sync pull --force
+    run_claude_profiles "$MACHINE4_DIR" sync pull --force
 
     # Verify machine4 has received all the content created by other machines
     # Check for files from earlier 3-machine tests (skills files from convergence test)
@@ -711,9 +711,9 @@ test_three_machine_status_consistency() {
     print_test "status command consistency across 3 machines"
 
     # Get status from all machines
-    status1=$(run_jean_claude "$MACHINE1_DIR" sync status 2>&1 || true)
-    status2=$(run_jean_claude "$MACHINE2_DIR" sync status 2>&1 || true)
-    status3=$(run_jean_claude "$MACHINE3_DIR" sync status 2>&1 || true)
+    status1=$(run_claude_profiles "$MACHINE1_DIR" sync status 2>&1 || true)
+    status2=$(run_claude_profiles "$MACHINE2_DIR" sync status 2>&1 || true)
+    status3=$(run_claude_profiles "$MACHINE3_DIR" sync status 2>&1 || true)
 
     # All should report some form of status without errors
     local all_status_ok=true
@@ -737,7 +737,7 @@ test_empty_hooks_directory() {
     # Remove all hooks
     rm -rf "$MACHINE1_DIR/.claude/hooks"/*
 
-    run_jean_claude "$MACHINE1_DIR" sync push
+    run_claude_profiles "$MACHINE1_DIR" sync push
 
     # Should handle empty directory gracefully
     print_success "Empty hooks directory handled"
@@ -749,8 +749,8 @@ test_special_characters_in_files() {
     # Create file with special characters
     echo "# Special chars: @#$%^&*()[]{}|\\\"';:<>?/~\`" > "$MACHINE1_DIR/.claude/CLAUDE.md"
 
-    run_jean_claude "$MACHINE1_DIR" sync push
-    run_jean_claude "$MACHINE2_DIR" sync pull --force
+    run_claude_profiles "$MACHINE1_DIR" sync push
+    run_claude_profiles "$MACHINE2_DIR" sync pull --force
 
     if grep -q "Special chars:" "$MACHINE2_DIR/.claude/CLAUDE.md"; then
         print_success "Special characters handled correctly"
@@ -772,8 +772,8 @@ test_large_settings_file() {
         echo '}'
     } > "$MACHINE1_DIR/.claude/settings.json"
 
-    run_jean_claude "$MACHINE1_DIR" sync push
-    run_jean_claude "$MACHINE2_DIR" sync pull --force
+    run_claude_profiles "$MACHINE1_DIR" sync push
+    run_claude_profiles "$MACHINE2_DIR" sync pull --force
 
     assert_file_exists "$MACHINE2_DIR/.claude/settings.json"
 
@@ -793,8 +793,8 @@ test_multiple_hooks() {
         chmod +x "$MACHINE1_DIR/.claude/hooks/hook-$i.sh"
     done
 
-    run_jean_claude "$MACHINE1_DIR" sync push
-    run_jean_claude "$MACHINE2_DIR" sync pull --force
+    run_claude_profiles "$MACHINE1_DIR" sync push
+    run_claude_profiles "$MACHINE2_DIR" sync pull --force
 
     # Verify all hooks are present
     for i in {1..10}; do
@@ -810,8 +810,8 @@ test_nested_hooks_directory() {
     echo "#!/bin/bash\necho 'nested hook'" > "$MACHINE1_DIR/.claude/hooks/utils/helper.sh"
     chmod +x "$MACHINE1_DIR/.claude/hooks/utils/helper.sh"
 
-    run_jean_claude "$MACHINE1_DIR" sync push
-    run_jean_claude "$MACHINE2_DIR" sync pull --force
+    run_claude_profiles "$MACHINE1_DIR" sync push
+    run_claude_profiles "$MACHINE2_DIR" sync pull --force
 
     if [ -f "$MACHINE2_DIR/.claude/hooks/utils/helper.sh" ]; then
         print_success "Nested hook directories supported"
@@ -832,8 +832,8 @@ test_skills_sync() {
     mkdir -p "$MACHINE1_DIR/.claude/skills/advanced"
     echo "# Advanced Skill" > "$MACHINE1_DIR/.claude/skills/advanced/complex-skill.md"
 
-    run_jean_claude "$MACHINE1_DIR" sync push
-    run_jean_claude "$MACHINE2_DIR" sync pull --force
+    run_claude_profiles "$MACHINE1_DIR" sync push
+    run_claude_profiles "$MACHINE2_DIR" sync pull --force
 
     # Verify skills are synced
     assert_file_exists "$MACHINE2_DIR/.claude/skills/custom-skill.md"
@@ -855,7 +855,7 @@ test_missing_claude_md() {
     rm -f "$MACHINE1_DIR/.claude/CLAUDE.md"
 
     # Should still work
-    run_jean_claude "$MACHINE1_DIR" sync push
+    run_claude_profiles "$MACHINE1_DIR" sync push
 
     print_success "Missing CLAUDE.md handled gracefully"
 }
@@ -867,7 +867,7 @@ test_missing_settings_json() {
     rm -f "$MACHINE1_DIR/.claude/settings.json"
 
     # Should still work
-    run_jean_claude "$MACHINE1_DIR" sync push
+    run_claude_profiles "$MACHINE1_DIR" sync push
 
     print_success "Missing settings.json handled gracefully"
 }
@@ -876,13 +876,13 @@ test_git_status_ahead() {
     print_test "git status when ahead of remote"
 
     # Make a commit without pushing to remote
-    echo "# New content" > "$MACHINE1_DIR/.claude/.jean-claude/CLAUDE.md"
-    cd "$MACHINE1_DIR/.claude/.jean-claude"
+    echo "# New content" > "$MACHINE1_DIR/.claude/.claude-profiles/CLAUDE.md"
+    cd "$MACHINE1_DIR/.claude/.claude-profiles"
     git add .
     git commit -m "Test commit" > /dev/null 2>&1 || true
     cd - > /dev/null
 
-    output=$(run_jean_claude "$MACHINE1_DIR" sync status 2>&1 || true)
+    output=$(run_claude_profiles "$MACHINE1_DIR" sync status 2>&1 || true)
 
     # Should show some status information
     print_success "Status command works when ahead of remote"
@@ -898,12 +898,12 @@ test_concurrent_modifications() {
     echo '{"from": "machine2"}' > "$MACHINE2_DIR/.claude/settings.json"
 
     # Both push (machine 1 first)
-    run_jean_claude "$MACHINE1_DIR" sync push
-    run_jean_claude "$MACHINE2_DIR" sync pull --force
-    run_jean_claude "$MACHINE2_DIR" sync push
+    run_claude_profiles "$MACHINE1_DIR" sync push
+    run_claude_profiles "$MACHINE2_DIR" sync pull --force
+    run_claude_profiles "$MACHINE2_DIR" sync push
 
     # Machine 1 pulls
-    run_jean_claude "$MACHINE1_DIR" sync pull --force
+    run_claude_profiles "$MACHINE1_DIR" sync pull --force
 
     # Both machines should have both changes
     if grep -q "From Machine 1" "$MACHINE1_DIR/.claude/CLAUDE.md" && \
@@ -919,14 +919,14 @@ test_metadata_persistence() {
     print_test "metadata persistence across commands"
 
     # Get initial metadata
-    initial_id=$(grep -o '"machineId":"[^"]*"' "$MACHINE1_DIR/.claude/.jean-claude/meta.json" | cut -d'"' -f4)
+    initial_id=$(grep -o '"machineId":"[^"]*"' "$MACHINE1_DIR/.claude/.claude-profiles/meta.json" | cut -d'"' -f4)
 
     # Run some commands
-    run_jean_claude "$MACHINE1_DIR" sync push
-    run_jean_claude "$MACHINE1_DIR" sync pull --force
+    run_claude_profiles "$MACHINE1_DIR" sync push
+    run_claude_profiles "$MACHINE1_DIR" sync pull --force
 
     # Check metadata is still the same
-    current_id=$(grep -o '"machineId":"[^"]*"' "$MACHINE1_DIR/.claude/.jean-claude/meta.json" | cut -d'"' -f4)
+    current_id=$(grep -o '"machineId":"[^"]*"' "$MACHINE1_DIR/.claude/.claude-profiles/meta.json" | cut -d'"' -f4)
 
     if [ "$initial_id" = "$current_id" ]; then
         print_success "Machine ID persisted correctly"
@@ -939,16 +939,16 @@ test_last_sync_timestamp() {
     print_test "last sync timestamp updates"
 
     # Check initial timestamp
-    initial_sync=$(grep -o '"lastSync":"[^"]*"' "$MACHINE1_DIR/.claude/.jean-claude/meta.json" | cut -d'"' -f4 || echo "null")
+    initial_sync=$(grep -o '"lastSync":"[^"]*"' "$MACHINE1_DIR/.claude/.claude-profiles/meta.json" | cut -d'"' -f4 || echo "null")
 
     # Sleep briefly
     sleep 1
 
     # Run pull to update timestamp
-    run_jean_claude "$MACHINE1_DIR" sync pull --force
+    run_claude_profiles "$MACHINE1_DIR" sync pull --force
 
     # Check updated timestamp
-    updated_sync=$(grep -o '"lastSync":"[^"]*"' "$MACHINE1_DIR/.claude/.jean-claude/meta.json" | cut -d'"' -f4)
+    updated_sync=$(grep -o '"lastSync":"[^"]*"' "$MACHINE1_DIR/.claude/.claude-profiles/meta.json" | cut -d'"' -f4)
 
     if [ "$initial_sync" != "$updated_sync" ]; then
         print_success "Last sync timestamp updated"
@@ -962,7 +962,7 @@ test_profile_create() {
     print_test "profile create command"
 
     # Create a profile using --yes and --shell flags to skip prompts
-    run_jean_claude "$MACHINE1_DIR" profile create work --yes --shell .zshrc
+    run_claude_profiles "$MACHINE1_DIR" profile create work --yes --shell .zshrc
 
     # Verify profile directory was created
     assert_dir_exists "$MACHINE1_DIR/.claude-work"
@@ -970,9 +970,9 @@ test_profile_create() {
     # Verify CLAUDE.md was created in profile dir
     assert_file_exists "$MACHINE1_DIR/.claude-work/CLAUDE.md"
 
-    # Verify profiles.json was created in jean-claude repo
-    assert_file_exists "$MACHINE1_DIR/.claude/.jean-claude/profiles.json"
-    assert_file_contains "$MACHINE1_DIR/.claude/.jean-claude/profiles.json" "work"
+    # Verify profiles.json was created in claude-profiles repo
+    assert_file_exists "$MACHINE1_DIR/.claude/.claude-profiles/profiles.json"
+    assert_file_contains "$MACHINE1_DIR/.claude/.claude-profiles/profiles.json" "work"
 }
 
 test_profile_symlinks() {
@@ -1011,7 +1011,7 @@ test_profile_symlink_content_shared() {
 
     # settings.json may not have existed when profile was created, so refresh symlinks first
     echo '{"theme": "dark", "shared": true}' > "$MACHINE1_DIR/.claude/settings.json"
-    run_jean_claude "$MACHINE1_DIR" profile refresh work
+    run_claude_profiles "$MACHINE1_DIR" profile refresh work
 
     # Verify the profile sees the same content through symlink
     if [ -L "$MACHINE1_DIR/.claude-work/settings.json" ]; then
@@ -1063,7 +1063,7 @@ test_profile_share_claude_md() {
     echo "# Shared global instructions" > "$MACHINE1_DIR/.claude/CLAUDE.md"
 
     # Create a profile with --share-claude-md
-    run_jean_claude "$MACHINE1_DIR" profile create shared-md --yes --shell .bashrc --share-claude-md
+    run_claude_profiles "$MACHINE1_DIR" profile create shared-md --yes --shell .bashrc --share-claude-md
 
     assert_dir_exists "$MACHINE1_DIR/.claude-shared-md"
 
@@ -1091,7 +1091,7 @@ test_profile_no_share_claude_md() {
     print_test "profile create with --no-share-claude-md creates independent CLAUDE.md"
 
     # Create a profile with --no-share-claude-md
-    run_jean_claude "$MACHINE1_DIR" profile create indep-md --yes --shell .bashrc --no-share-claude-md
+    run_claude_profiles "$MACHINE1_DIR" profile create indep-md --yes --shell .bashrc --no-share-claude-md
 
     assert_dir_exists "$MACHINE1_DIR/.claude-indep-md"
     assert_file_exists "$MACHINE1_DIR/.claude-indep-md/CLAUDE.md"
@@ -1115,7 +1115,7 @@ test_profile_share_statusline() {
     echo 'echo "my statusline"' >> "$MACHINE1_DIR/.claude/statusline.sh"
 
     # Create a profile with --share-statusline
-    run_jean_claude "$MACHINE1_DIR" profile create shared-sl --yes --shell .bashrc --share-statusline
+    run_claude_profiles "$MACHINE1_DIR" profile create shared-sl --yes --shell .bashrc --share-statusline
 
     assert_dir_exists "$MACHINE1_DIR/.claude-shared-sl"
 
@@ -1143,7 +1143,7 @@ test_profile_no_share_statusline() {
     print_test "profile create with --no-share-statusline does not create statusline.sh"
 
     # Create a profile with --no-share-statusline
-    run_jean_claude "$MACHINE1_DIR" profile create no-sl --yes --shell .bashrc --no-share-statusline
+    run_claude_profiles "$MACHINE1_DIR" profile create no-sl --yes --shell .bashrc --no-share-statusline
 
     assert_dir_exists "$MACHINE1_DIR/.claude-no-sl"
 
@@ -1159,7 +1159,7 @@ test_profile_share_both() {
     print_test "profile create with both --share-claude-md and --share-statusline"
 
     # Create a profile sharing both
-    run_jean_claude "$MACHINE1_DIR" profile create shared-both --yes --shell .bashrc --share-claude-md --share-statusline
+    run_claude_profiles "$MACHINE1_DIR" profile create shared-both --yes --shell .bashrc --share-claude-md --share-statusline
 
     assert_dir_exists "$MACHINE1_DIR/.claude-shared-both"
 
@@ -1176,7 +1176,7 @@ test_profile_shell_alias() {
 
     # Verify alias was added to .zshrc
     assert_file_exists "$MACHINE1_DIR/.zshrc"
-    assert_file_contains "$MACHINE1_DIR/.zshrc" "jean-claude profile: work"
+    assert_file_contains "$MACHINE1_DIR/.zshrc" "claude-profiles profile: work"
     assert_file_contains "$MACHINE1_DIR/.zshrc" "claude-work"
     assert_file_contains "$MACHINE1_DIR/.zshrc" "CLAUDE_CONFIG_DIR"
 }
@@ -1184,7 +1184,7 @@ test_profile_shell_alias() {
 test_profile_list() {
     print_test "profile list command"
 
-    output=$(run_jean_claude "$MACHINE1_DIR" profile list 2>&1 || true)
+    output=$(run_claude_profiles "$MACHINE1_DIR" profile list 2>&1 || true)
 
     if echo "$output" | grep -q "work"; then
         print_success "Profile list shows 'work' profile"
@@ -1196,23 +1196,23 @@ test_profile_list() {
 test_profile_create_second() {
     print_test "create a second profile"
 
-    run_jean_claude "$MACHINE1_DIR" profile create personal --yes --shell .bashrc
+    run_claude_profiles "$MACHINE1_DIR" profile create personal --yes --shell .bashrc
 
     assert_dir_exists "$MACHINE1_DIR/.claude-personal"
     assert_file_exists "$MACHINE1_DIR/.claude-personal/CLAUDE.md"
     assert_file_exists "$MACHINE1_DIR/.bashrc"
-    assert_file_contains "$MACHINE1_DIR/.bashrc" "jean-claude profile: personal"
+    assert_file_contains "$MACHINE1_DIR/.bashrc" "claude-profiles profile: personal"
     assert_file_contains "$MACHINE1_DIR/.bashrc" "claude-personal"
 
     # Verify profiles.json has both profiles
-    assert_file_contains "$MACHINE1_DIR/.claude/.jean-claude/profiles.json" "work"
-    assert_file_contains "$MACHINE1_DIR/.claude/.jean-claude/profiles.json" "personal"
+    assert_file_contains "$MACHINE1_DIR/.claude/.claude-profiles/profiles.json" "work"
+    assert_file_contains "$MACHINE1_DIR/.claude/.claude-profiles/profiles.json" "personal"
 }
 
 test_profile_create_duplicate() {
     print_test "create duplicate profile fails"
 
-    if run_jean_claude "$MACHINE1_DIR" profile create work --yes --shell .zshrc 2>&1; then
+    if run_claude_profiles "$MACHINE1_DIR" profile create work --yes --shell .zshrc 2>&1; then
         print_failure "Should have failed creating duplicate profile"
     else
         print_success "Correctly rejected duplicate profile"
@@ -1222,13 +1222,13 @@ test_profile_create_duplicate() {
 test_profile_create_invalid_name() {
     print_test "create profile with invalid name fails"
 
-    if run_jean_claude "$MACHINE1_DIR" profile create "INVALID" --yes --shell .zshrc 2>&1; then
+    if run_claude_profiles "$MACHINE1_DIR" profile create "INVALID" --yes --shell .zshrc 2>&1; then
         print_failure "Should have failed with invalid name"
     else
         print_success "Correctly rejected invalid profile name"
     fi
 
-    if run_jean_claude "$MACHINE1_DIR" profile create "123bad" --yes --shell .zshrc 2>&1; then
+    if run_claude_profiles "$MACHINE1_DIR" profile create "123bad" --yes --shell .zshrc 2>&1; then
         print_failure "Should have failed with name starting with number"
     else
         print_success "Correctly rejected name starting with number"
@@ -1243,7 +1243,7 @@ test_profile_refresh() {
     echo "# Test agent" > "$MACHINE1_DIR/.claude/agents/test-agent.md"
 
     # Refresh the profile
-    run_jean_claude "$MACHINE1_DIR" profile refresh work
+    run_claude_profiles "$MACHINE1_DIR" profile refresh work
 
     # Verify the new symlink was created
     if [ -L "$MACHINE1_DIR/.claude-work/agents" ]; then
@@ -1262,7 +1262,7 @@ test_profile_delete() {
     print_test "profile delete command"
 
     # Delete the personal profile
-    run_jean_claude "$MACHINE1_DIR" profile delete personal --yes
+    run_claude_profiles "$MACHINE1_DIR" profile delete personal --yes
 
     # Verify directory was removed
     if [ -d "$MACHINE1_DIR/.claude-personal" ]; then
@@ -1272,14 +1272,14 @@ test_profile_delete() {
     fi
 
     # Verify removed from profiles.json
-    if grep -q "personal" "$MACHINE1_DIR/.claude/.jean-claude/profiles.json"; then
+    if grep -q "personal" "$MACHINE1_DIR/.claude/.claude-profiles/profiles.json"; then
         print_failure "Profile should have been removed from profiles.json"
     else
         print_success "Profile removed from profiles.json"
     fi
 
     # Verify alias removed from .bashrc
-    if grep -q "jean-claude profile: personal" "$MACHINE1_DIR/.bashrc"; then
+    if grep -q "claude-profiles profile: personal" "$MACHINE1_DIR/.bashrc"; then
         print_failure "Alias should have been removed from .bashrc"
     else
         print_success "Alias removed from .bashrc"
@@ -1287,7 +1287,7 @@ test_profile_delete() {
 
     # Verify work profile still exists
     assert_dir_exists "$MACHINE1_DIR/.claude-work"
-    assert_file_contains "$MACHINE1_DIR/.claude/.jean-claude/profiles.json" "work"
+    assert_file_contains "$MACHINE1_DIR/.claude/.claude-profiles/profiles.json" "work"
 }
 
 test_profile_delete_preserves_main() {
@@ -1309,7 +1309,7 @@ test_profile_not_initialized() {
     MACHINE_NOINIT_DIR="$TEST_DIR/machine-noinit"
     mkdir -p "$MACHINE_NOINIT_DIR/.claude"
 
-    if run_jean_claude "$MACHINE_NOINIT_DIR" profile create test --yes --shell .zshrc 2>&1 | grep -q "not initialized"; then
+    if run_claude_profiles "$MACHINE_NOINIT_DIR" profile create test --yes --shell .zshrc 2>&1 | grep -q "not initialized"; then
         print_success "Correctly detected not initialized"
     else
         print_failure "Did not detect not initialized state"
@@ -1323,14 +1323,14 @@ test_init_no_sync() {
     local NOSYNC_DIR="$TEST_DIR/machine-nosync"
     mkdir -p "$NOSYNC_DIR/.claude"
 
-    run_jean_claude "$NOSYNC_DIR" init --no-sync
+    run_claude_profiles "$NOSYNC_DIR" init --no-sync
 
-    # Should create jean-claude dir and meta.json
-    assert_dir_exists "$NOSYNC_DIR/.claude/.jean-claude"
-    assert_file_exists "$NOSYNC_DIR/.claude/.jean-claude/meta.json"
+    # Should create claude-profiles dir and meta.json
+    assert_dir_exists "$NOSYNC_DIR/.claude/.claude-profiles"
+    assert_file_exists "$NOSYNC_DIR/.claude/.claude-profiles/meta.json"
 
     # Should NOT have a .git directory
-    if [ -d "$NOSYNC_DIR/.claude/.jean-claude/.git" ]; then
+    if [ -d "$NOSYNC_DIR/.claude/.claude-profiles/.git" ]; then
         print_failure ".git directory should not exist with --no-sync"
     else
         print_success "No .git directory created with --no-sync"
@@ -1344,11 +1344,11 @@ test_init_url_implies_sync() {
     local URL_DIR="$TEST_DIR/machine-url"
     mkdir -p "$URL_DIR/.claude"
 
-    run_jean_claude "$URL_DIR" init --url "$REMOTE_REPO"
+    run_claude_profiles "$URL_DIR" init --url "$REMOTE_REPO"
 
     # Should have set up git repo with remote
-    assert_dir_exists "$URL_DIR/.claude/.jean-claude/.git"
-    assert_file_exists "$URL_DIR/.claude/.jean-claude/meta.json"
+    assert_dir_exists "$URL_DIR/.claude/.claude-profiles/.git"
+    assert_file_exists "$URL_DIR/.claude/.claude-profiles/meta.json"
 }
 
 # Test two-phase flow: init --no-sync then sync setup --url
@@ -1359,19 +1359,19 @@ test_two_phase_init_then_sync_setup() {
     mkdir -p "$TWOPHASE_DIR/.claude"
 
     # Phase 1: init without sync
-    run_jean_claude "$TWOPHASE_DIR" init --no-sync
+    run_claude_profiles "$TWOPHASE_DIR" init --no-sync
 
-    assert_dir_exists "$TWOPHASE_DIR/.claude/.jean-claude"
-    assert_file_exists "$TWOPHASE_DIR/.claude/.jean-claude/meta.json"
+    assert_dir_exists "$TWOPHASE_DIR/.claude/.claude-profiles"
+    assert_file_exists "$TWOPHASE_DIR/.claude/.claude-profiles/meta.json"
 
     # Phase 2: set up sync
-    run_jean_claude "$TWOPHASE_DIR" sync setup --url "$REMOTE_REPO"
+    run_claude_profiles "$TWOPHASE_DIR" sync setup --url "$REMOTE_REPO"
 
     # Should now have a git repo
-    assert_dir_exists "$TWOPHASE_DIR/.claude/.jean-claude/.git"
+    assert_dir_exists "$TWOPHASE_DIR/.claude/.claude-profiles/.git"
 
     # Should be able to pull
-    run_jean_claude "$TWOPHASE_DIR" sync pull --force
+    run_claude_profiles "$TWOPHASE_DIR" sync pull --force
 
     # Should have files from remote
     if [ -f "$TWOPHASE_DIR/.claude/CLAUDE.md" ]; then
@@ -1385,7 +1385,7 @@ test_two_phase_init_then_sync_setup() {
 test_sync_setup_already_configured() {
     print_test "sync setup when already configured shows current remote"
 
-    output=$(run_jean_claude "$MACHINE1_DIR" sync setup 2>&1 || true)
+    output=$(run_claude_profiles "$MACHINE1_DIR" sync setup 2>&1 || true)
 
     if echo "$output" | grep -qi "already configured"; then
         print_success "sync setup detected existing configuration"
@@ -1407,7 +1407,7 @@ test_sync_setup_reconfigure_url() {
         git init > /dev/null 2>&1
         git config user.email "test@example.com"
         git config user.name "Test User"
-        echo '{"version":"1.1.0","managedBy":"jean-claude","lastSync":null,"machineId":"test","platform":"linux","claudeConfigPath":"/test"}' > meta.json
+        echo '{"version":"1.1.0","managedBy":"claude-profiles","lastSync":null,"machineId":"test","platform":"linux","claudeConfigPath":"/test"}' > meta.json
         git add meta.json
         git commit -m "Initial commit" > /dev/null 2>&1
     )
@@ -1415,7 +1415,7 @@ test_sync_setup_reconfigure_url() {
     rm -rf "$SECOND_REMOTE_TEMP"
 
     # Reconfigure machine1 to use second remote
-    output=$(run_jean_claude "$MACHINE1_DIR" sync setup --url "$SECOND_REMOTE" 2>&1 || true)
+    output=$(run_claude_profiles "$MACHINE1_DIR" sync setup --url "$SECOND_REMOTE" 2>&1 || true)
 
     if echo "$output" | grep -qi "updated"; then
         print_success "Remote URL updated successfully"
@@ -1424,7 +1424,7 @@ test_sync_setup_reconfigure_url() {
     fi
 
     # Restore original remote
-    run_jean_claude "$MACHINE1_DIR" sync setup --url "$REMOTE_REPO" > /dev/null 2>&1
+    run_claude_profiles "$MACHINE1_DIR" sync setup --url "$REMOTE_REPO" > /dev/null 2>&1
 }
 
 # Test deprecated command stubs
@@ -1433,7 +1433,7 @@ test_deprecated_push() {
 
     echo "# Deprecated test content" > "$MACHINE1_DIR/.claude/CLAUDE.md"
 
-    output=$(run_jean_claude "$MACHINE1_DIR" push 2>&1 || true)
+    output=$(run_claude_profiles "$MACHINE1_DIR" push 2>&1 || true)
 
     if echo "$output" | grep -qi "deprecated"; then
         print_success "push shows deprecation warning"
@@ -1451,7 +1451,7 @@ test_deprecated_push() {
 test_deprecated_pull() {
     print_test "deprecated pull command shows warning and still works"
 
-    output=$(run_jean_claude "$MACHINE2_DIR" pull --force 2>&1 || true)
+    output=$(run_claude_profiles "$MACHINE2_DIR" pull --force 2>&1 || true)
 
     if echo "$output" | grep -qi "deprecated"; then
         print_success "pull shows deprecation warning"
@@ -1469,7 +1469,7 @@ test_deprecated_pull() {
 test_deprecated_status() {
     print_test "deprecated status command shows warning and still works"
 
-    output=$(run_jean_claude "$MACHINE1_DIR" status 2>&1 || true)
+    output=$(run_claude_profiles "$MACHINE1_DIR" status 2>&1 || true)
 
     if echo "$output" | grep -qi "deprecated"; then
         print_success "status shows deprecation warning"
@@ -1504,12 +1504,12 @@ test_keybindings_sync() {
 }
 KEYBINDINGS
 
-    run_jean_claude "$MACHINE1_DIR" sync push
+    run_claude_profiles "$MACHINE1_DIR" sync push
 
-    assert_file_exists "$MACHINE1_DIR/.claude/.jean-claude/keybindings.json"
-    assert_file_contains "$MACHINE1_DIR/.claude/.jean-claude/keybindings.json" "ctrl+enter"
+    assert_file_exists "$MACHINE1_DIR/.claude/.claude-profiles/keybindings.json"
+    assert_file_contains "$MACHINE1_DIR/.claude/.claude-profiles/keybindings.json" "ctrl+enter"
 
-    run_jean_claude "$MACHINE2_DIR" sync pull --force
+    run_claude_profiles "$MACHINE2_DIR" sync pull --force
 
     assert_file_exists "$MACHINE2_DIR/.claude/keybindings.json"
 
@@ -1532,8 +1532,8 @@ test_keybindings_update_sync() {
 }
 KEYBINDINGS
 
-    run_jean_claude "$MACHINE2_DIR" sync push
-    run_jean_claude "$MACHINE1_DIR" sync pull --force
+    run_claude_profiles "$MACHINE2_DIR" sync push
+    run_claude_profiles "$MACHINE1_DIR" sync pull --force
 
     if grep -q "newBinding" "$MACHINE1_DIR/.claude/keybindings.json"; then
         print_success "Updated keybindings.json synced back"
@@ -1548,11 +1548,11 @@ test_statusline_sync() {
 
     echo '#!/bin/bash\necho "custom statusline"' > "$MACHINE1_DIR/.claude/statusline.sh"
 
-    run_jean_claude "$MACHINE1_DIR" sync push
+    run_claude_profiles "$MACHINE1_DIR" sync push
 
-    assert_file_exists "$MACHINE1_DIR/.claude/.jean-claude/statusline.sh"
+    assert_file_exists "$MACHINE1_DIR/.claude/.claude-profiles/statusline.sh"
 
-    run_jean_claude "$MACHINE2_DIR" sync pull --force
+    run_claude_profiles "$MACHINE2_DIR" sync pull --force
 
     assert_file_exists "$MACHINE2_DIR/.claude/statusline.sh"
 
@@ -1571,12 +1571,12 @@ test_agents_direct_sync() {
     echo "# Code Review Agent" > "$MACHINE1_DIR/.claude/agents/code-reviewer.md"
     echo "# Refactor Agent" > "$MACHINE1_DIR/.claude/agents/refactorer.md"
 
-    run_jean_claude "$MACHINE1_DIR" sync push
+    run_claude_profiles "$MACHINE1_DIR" sync push
 
-    assert_file_exists "$MACHINE1_DIR/.claude/.jean-claude/agents/code-reviewer.md"
-    assert_file_exists "$MACHINE1_DIR/.claude/.jean-claude/agents/refactorer.md"
+    assert_file_exists "$MACHINE1_DIR/.claude/.claude-profiles/agents/code-reviewer.md"
+    assert_file_exists "$MACHINE1_DIR/.claude/.claude-profiles/agents/refactorer.md"
 
-    run_jean_claude "$MACHINE2_DIR" sync pull --force
+    run_claude_profiles "$MACHINE2_DIR" sync pull --force
 
     assert_file_exists "$MACHINE2_DIR/.claude/agents/code-reviewer.md"
     assert_file_exists "$MACHINE2_DIR/.claude/agents/refactorer.md"
@@ -1594,8 +1594,8 @@ test_agents_nested_sync() {
     mkdir -p "$MACHINE1_DIR/.claude/agents/specialized"
     echo "# Security Agent" > "$MACHINE1_DIR/.claude/agents/specialized/security.md"
 
-    run_jean_claude "$MACHINE1_DIR" sync push
-    run_jean_claude "$MACHINE2_DIR" sync pull --force
+    run_claude_profiles "$MACHINE1_DIR" sync push
+    run_claude_profiles "$MACHINE2_DIR" sync pull --force
 
     if [ -f "$MACHINE2_DIR/.claude/agents/specialized/security.md" ]; then
         print_success "Nested agent directories synced"
@@ -1608,7 +1608,7 @@ test_agents_nested_sync() {
 test_meta_json_fields() {
     print_test "meta.json contains all required fields"
 
-    local meta_file="$MACHINE1_DIR/.claude/.jean-claude/meta.json"
+    local meta_file="$MACHINE1_DIR/.claude/.claude-profiles/meta.json"
     assert_file_exists "$meta_file"
 
     assert_file_contains "$meta_file" "version"
@@ -1619,12 +1619,12 @@ test_meta_json_fields() {
 }
 
 test_meta_json_managed_by() {
-    print_test "meta.json managedBy field is set to jean-claude"
+    print_test "meta.json managedBy field is set to claude-profiles"
 
-    local meta_file="$MACHINE1_DIR/.claude/.jean-claude/meta.json"
+    local meta_file="$MACHINE1_DIR/.claude/.claude-profiles/meta.json"
 
-    if grep -q '"managedBy"' "$meta_file" && grep -q '"jean-claude"' "$meta_file"; then
-        print_success "managedBy field is set to 'jean-claude'"
+    if grep -q '"managedBy"' "$meta_file" && grep -q '"claude-profiles"' "$meta_file"; then
+        print_success "managedBy field is set to 'claude-profiles'"
     else
         print_failure "managedBy field is not set correctly"
     fi
@@ -1633,13 +1633,13 @@ test_meta_json_managed_by() {
 test_meta_json_persists_across_push_pull() {
     print_test "meta.json persists across push and pull cycles"
 
-    local meta_file="$MACHINE1_DIR/.claude/.jean-claude/meta.json"
+    local meta_file="$MACHINE1_DIR/.claude/.claude-profiles/meta.json"
     local initial_machine_id
     initial_machine_id=$(grep -oE '"machineId"[[:space:]]*:[[:space:]]*"[^"]*"' "$meta_file" | sed 's/.*: *"//' | sed 's/"$//')
 
     echo "# Meta persistence test" > "$MACHINE1_DIR/.claude/CLAUDE.md"
-    run_jean_claude "$MACHINE1_DIR" sync push
-    run_jean_claude "$MACHINE1_DIR" sync pull --force
+    run_claude_profiles "$MACHINE1_DIR" sync push
+    run_claude_profiles "$MACHINE1_DIR" sync pull --force
 
     local current_machine_id
     current_machine_id=$(grep -oE '"machineId"[[:space:]]*:[[:space:]]*"[^"]*"' "$meta_file" | sed 's/.*: *"//' | sed 's/"$//')
@@ -1662,22 +1662,22 @@ test_init_partial_recovery() {
     mkdir -p "$RECOVERY_DIR/.claude"
 
     # First, init normally with sync
-    run_jean_claude "$RECOVERY_DIR" init --sync --url "$REMOTE_REPO"
+    run_claude_profiles "$RECOVERY_DIR" init --sync --url "$REMOTE_REPO"
 
-    assert_dir_exists "$RECOVERY_DIR/.claude/.jean-claude/.git"
-    assert_file_exists "$RECOVERY_DIR/.claude/.jean-claude/meta.json"
+    assert_dir_exists "$RECOVERY_DIR/.claude/.claude-profiles/.git"
+    assert_file_exists "$RECOVERY_DIR/.claude/.claude-profiles/meta.json"
 
     # Simulate partial state: delete meta.json but leave .git
-    rm "$RECOVERY_DIR/.claude/.jean-claude/meta.json"
+    rm "$RECOVERY_DIR/.claude/.claude-profiles/meta.json"
 
     # Re-run init — should detect existing .git and reuse it
-    output=$(run_jean_claude "$RECOVERY_DIR" init --no-sync 2>&1 || true)
+    output=$(run_claude_profiles "$RECOVERY_DIR" init --no-sync 2>&1 || true)
 
     # meta.json should be recreated
-    assert_file_exists "$RECOVERY_DIR/.claude/.jean-claude/meta.json"
+    assert_file_exists "$RECOVERY_DIR/.claude/.claude-profiles/meta.json"
 
     # .git should still be there
-    assert_dir_exists "$RECOVERY_DIR/.claude/.jean-claude/.git"
+    assert_dir_exists "$RECOVERY_DIR/.claude/.claude-profiles/.git"
 
     if echo "$output" | grep -qi "existing Git repository"; then
         print_success "Init detected and reused existing .git repo"
@@ -1694,11 +1694,11 @@ test_sync_push_no_remote() {
     mkdir -p "$NOREMOTE_DIR/.claude"
 
     # Init without sync (no remote)
-    run_jean_claude "$NOREMOTE_DIR" init --no-sync
+    run_claude_profiles "$NOREMOTE_DIR" init --no-sync
 
     # Manually init git without a remote
     (
-        cd "$NOREMOTE_DIR/.claude/.jean-claude"
+        cd "$NOREMOTE_DIR/.claude/.claude-profiles"
         git init > /dev/null 2>&1
         git config user.email "test@example.com"
         git config user.name "Test User"
@@ -1707,7 +1707,7 @@ test_sync_push_no_remote() {
     # Create a file to push
     echo "# No remote test" > "$NOREMOTE_DIR/.claude/CLAUDE.md"
 
-    output=$(run_jean_claude "$NOREMOTE_DIR" sync push 2>&1 || true)
+    output=$(run_claude_profiles "$NOREMOTE_DIR" sync push 2>&1 || true)
 
     if echo "$output" | grep -qi "no remote\|committed locally"; then
         print_success "Push with no remote warns about local-only commit"
@@ -1721,14 +1721,14 @@ test_profile_registry_sync() {
     print_test "profiles.json syncs across machines via push/pull"
 
     # Machine1 already has a 'work' profile from earlier tests
-    run_jean_claude "$MACHINE1_DIR" sync push
+    run_claude_profiles "$MACHINE1_DIR" sync push
 
-    assert_file_exists "$MACHINE1_DIR/.claude/.jean-claude/profiles.json"
+    assert_file_exists "$MACHINE1_DIR/.claude/.claude-profiles/profiles.json"
 
-    run_jean_claude "$MACHINE2_DIR" sync pull --force
+    run_claude_profiles "$MACHINE2_DIR" sync pull --force
 
-    if [ -f "$MACHINE2_DIR/.claude/.jean-claude/profiles.json" ]; then
-        if grep -q "work" "$MACHINE2_DIR/.claude/.jean-claude/profiles.json"; then
+    if [ -f "$MACHINE2_DIR/.claude/.claude-profiles/profiles.json" ]; then
+        if grep -q "work" "$MACHINE2_DIR/.claude/.claude-profiles/profiles.json"; then
             print_success "profiles.json synced to machine2 with profile data"
         else
             print_failure "profiles.json synced but missing profile data"
@@ -1744,9 +1744,9 @@ test_profile_list_empty() {
 
     local FRESH_DIR="$TEST_DIR/machine-no-profiles"
     mkdir -p "$FRESH_DIR/.claude"
-    run_jean_claude "$FRESH_DIR" init --no-sync 2>/dev/null
+    run_claude_profiles "$FRESH_DIR" init --no-sync 2>/dev/null
 
-    output=$(run_jean_claude "$FRESH_DIR" profile list 2>&1 || true)
+    output=$(run_claude_profiles "$FRESH_DIR" profile list 2>&1 || true)
 
     if echo "$output" | grep -qi "no profiles"; then
         print_success "Profile list correctly shows empty state"
@@ -1759,7 +1759,7 @@ test_profile_list_empty() {
 test_profile_delete_nonexistent() {
     print_test "delete nonexistent profile fails"
 
-    if run_jean_claude "$MACHINE1_DIR" profile delete nonexistent --yes 2>&1; then
+    if run_claude_profiles "$MACHINE1_DIR" profile delete nonexistent --yes 2>&1; then
         print_failure "Should have failed deleting nonexistent profile"
     else
         print_success "Correctly rejected deleting nonexistent profile"
@@ -1770,15 +1770,15 @@ test_profile_delete_nonexistent() {
 test_profile_create_hyphenated_name() {
     print_test "create profile with hyphenated name"
 
-    run_jean_claude "$MACHINE1_DIR" profile create my-project --yes --shell .bashrc
+    run_claude_profiles "$MACHINE1_DIR" profile create my-project --yes --shell .bashrc
 
     assert_dir_exists "$MACHINE1_DIR/.claude-my-project"
     assert_file_exists "$MACHINE1_DIR/.claude-my-project/CLAUDE.md"
-    assert_file_contains "$MACHINE1_DIR/.claude/.jean-claude/profiles.json" "my-project"
+    assert_file_contains "$MACHINE1_DIR/.claude/.claude-profiles/profiles.json" "my-project"
     assert_file_contains "$MACHINE1_DIR/.bashrc" "claude-my-project"
 
     # Clean up
-    run_jean_claude "$MACHINE1_DIR" profile delete my-project --yes
+    run_claude_profiles "$MACHINE1_DIR" profile delete my-project --yes
 }
 
 # Test profile refresh after adding new shared items
@@ -1791,7 +1791,7 @@ test_profile_refresh_new_shared_items() {
     mkdir -p "$MACHINE1_DIR/.claude/plugins"
     echo "# Plugin" > "$MACHINE1_DIR/.claude/plugins/test-plugin.md"
 
-    run_jean_claude "$MACHINE1_DIR" profile refresh work
+    run_claude_profiles "$MACHINE1_DIR" profile refresh work
 
     if [ -L "$MACHINE1_DIR/.claude-work/skills" ]; then
         print_success "skills symlink created after refresh"
@@ -1826,7 +1826,7 @@ test_profile_keybindings_symlink() {
         echo '{"submit": "ctrl+enter"}' > "$MACHINE1_DIR/.claude/keybindings.json"
     fi
 
-    run_jean_claude "$MACHINE1_DIR" profile refresh work
+    run_claude_profiles "$MACHINE1_DIR" profile refresh work
 
     if [ -L "$MACHINE1_DIR/.claude-work/keybindings.json" ]; then
         print_success "keybindings.json is symlinked in profile"
@@ -1854,7 +1854,7 @@ test_sync_status_heading() {
     print_test "sync status uses different headings based on git presence"
 
     # With git configured, should show "Sync Status"
-    output_with_git=$(run_jean_claude "$MACHINE1_DIR" sync status 2>&1 || true)
+    output_with_git=$(run_claude_profiles "$MACHINE1_DIR" sync status 2>&1 || true)
 
     if echo "$output_with_git" | grep -q "Sync Status"; then
         print_success "Shows 'Sync Status' when git is configured"
@@ -1865,9 +1865,9 @@ test_sync_status_heading() {
     # Without git, should show "File Status"
     local NOGIT_DIR="$TEST_DIR/machine-nogit"
     mkdir -p "$NOGIT_DIR/.claude"
-    run_jean_claude "$NOGIT_DIR" init --no-sync 2>/dev/null
+    run_claude_profiles "$NOGIT_DIR" init --no-sync 2>/dev/null
 
-    output_without_git=$(run_jean_claude "$NOGIT_DIR" sync status 2>&1 || true)
+    output_without_git=$(run_claude_profiles "$NOGIT_DIR" sync status 2>&1 || true)
 
     if echo "$output_without_git" | grep -q "File Status"; then
         print_success "Shows 'File Status' when no git repo"
@@ -1883,7 +1883,7 @@ test_init_conflicting_flags() {
     local CONFLICT_DIR="$TEST_DIR/machine-conflict-flags"
     mkdir -p "$CONFLICT_DIR/.claude"
 
-    output=$(run_jean_claude "$CONFLICT_DIR" init --url "$REMOTE_REPO" --no-sync 2>&1 || true)
+    output=$(run_claude_profiles "$CONFLICT_DIR" init --url "$REMOTE_REPO" --no-sync 2>&1 || true)
 
     if echo "$output" | grep -qi "ignoring\|implies"; then
         print_success "Warns about conflicting --url and --no-sync flags"
@@ -1892,12 +1892,12 @@ test_init_conflicting_flags() {
     fi
 
     # --url should win: git should be set up
-    assert_dir_exists "$CONFLICT_DIR/.claude/.jean-claude/.git"
+    assert_dir_exists "$CONFLICT_DIR/.claude/.claude-profiles/.git"
 }
 
 # Run all tests
 run_all_tests() {
-    print_header "Jean-Claude Integration Tests"
+    print_header "claude-profiles Integration Tests"
 
     setup_test_environment
 

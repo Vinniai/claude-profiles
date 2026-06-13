@@ -21,6 +21,12 @@ import {
   cooldownRemainingMs,
 } from '../lib/state.js';
 import { ensureHooksInstalled } from '../lib/hooks-install.js';
+import { recentRouting, clearRoutingLog } from '../lib/routing-log.js';
+import {
+  printStatusDashboard,
+  printRoutingLog,
+  type StatusRow,
+} from '../lib/render.js';
 import { ClaudeProfilesError, ErrorCode } from '../types/index.js';
 
 function parseProfilesList(raw: string): string[] {
@@ -129,7 +135,7 @@ const chainDeleteCommand = new Command('delete')
   });
 
 const chainStatusCommand = new Command('status')
-  .description('Show health (cooldowns / needs-auth) for all profiles')
+  .description('Show health + usage budgets (session / weekly) for all profiles')
   .action(async () => {
     const config = await loadProfiles();
     const state = await loadState();
@@ -140,29 +146,57 @@ const chainStatusCommand = new Command('status')
     }
     const now = new Date();
     logger.heading('Profile health');
-    console.log();
-    for (const name of names) {
+
+    const rows: StatusRow[] = names.map((name) => {
       const s = state.profiles[name];
-      let status: string;
-      if (!s || isHealthy(s, now)) {
-        status = chalk.green('healthy');
-      } else if (s.needsAuth) {
-        status = chalk.red('needs auth (run: claude-profiles profile login ' + name + ')');
-      } else {
-        const remaining = cooldownRemainingMs(s, now);
-        status = chalk.yellow(
-          `cooling down${remaining ? ` (${formatRemaining(remaining)} left)` : ''}`
-        );
+      const profile = config.profiles[name];
+      let status: StatusRow['status'] = 'healthy';
+      let detail: string | undefined;
+      if (s && !isHealthy(s, now)) {
+        if (s.needsAuth) {
+          status = 'auth';
+          detail = `run: claude-profiles profile login ${name}`;
+        } else {
+          status = 'cooling';
+          const remaining = cooldownRemainingMs(s, now);
+          detail = remaining
+            ? `${formatRemaining(remaining)} left${s.lastError ? ` — ${s.lastError}` : ''}`
+            : s.lastError;
+        }
       }
-      const rows: [string, string][] = [['Status', status]];
-      if (config.profiles[name].description) {
-        rows.push(['Description', config.profiles[name].description!]);
-      }
-      if (s?.lastError) rows.push(['Last error', chalk.dim(s.lastError)]);
-      console.log(`  ${chalk.bold(name)}`);
-      logger.table(rows);
-      console.log();
+      return {
+        name,
+        status,
+        detail,
+        description: profile.description,
+        kind: status === 'healthy' ? undefined : s?.lastEventKind,
+        session: s?.usage?.session,
+        weekly: s?.usage?.weekly,
+      };
+    });
+
+    console.log();
+    printStatusDashboard(rows);
+  });
+
+const chainLogCommand = new Command('log')
+  .description('Show the routing history — launches, deliberate switches, failovers')
+  .option('-c, --chain <name>', 'Only show events for this chain')
+  .option('-n, --limit <n>', 'How many recent events to show', '20')
+  .option('--clear', 'Erase the routing history')
+  .action(async (options: { chain?: string; limit: string; clear?: boolean }) => {
+    if (options.clear) {
+      await clearRoutingLog();
+      logger.success('Routing history cleared.');
+      return;
     }
+    const limit = Math.max(1, parseInt(options.limit, 10) || 20);
+    const events = await recentRouting(limit, options.chain);
+    logger.heading(
+      options.chain ? `Routing history — chain "${options.chain}"` : 'Routing history'
+    );
+    console.log();
+    printRoutingLog(events);
   });
 
 const chainResetCommand = new Command('reset')
@@ -194,4 +228,5 @@ export const chainCommand = new Command('chain')
   .addCommand(chainRemoveCommand)
   .addCommand(chainDeleteCommand)
   .addCommand(chainStatusCommand)
+  .addCommand(chainLogCommand)
   .addCommand(chainResetCommand);

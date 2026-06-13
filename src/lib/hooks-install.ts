@@ -49,7 +49,7 @@ export function getSettingsPath(): string {
 export function resolveHookBin(): string {
   const entry = process.argv[1] ?? '';
   const base = path.basename(entry);
-  if (base === 'claude-profiles' || base === 'jean-claude') {
+  if (base === 'claude-profiles') {
     return 'claude-profiles';
   }
   return `"${process.execPath}" "${entry}"`;

@@ -3,7 +3,7 @@
 # E2E tests for tickets #1 and #19
 #
 # Ticket #1:  Validate repo contains Claude config before syncing
-#             A non-jean-claude repo should be rejected with a warning.
+#             A non-claude-profiles repo should be rejected with a warning.
 #
 # Ticket #19: sync setup has no way to reconfigure an existing remote
 #             Running `sync setup --url <new>` when a remote already exists
@@ -26,7 +26,7 @@ TESTS_FAILED=0
 
 # Paths
 TEST_DIR=""
-JEAN_CLAUDE_BIN=""
+CLAUDE_PROFILES_BIN=""
 
 # Per-test environment variables set by create_test_env
 TICKET_REMOTE=""
@@ -99,15 +99,15 @@ assert_equals() {
 }
 
 # ---------------------------------------------------------------------------
-# Helper to run jean-claude with environment isolation
+# Helper to run claude-profiles with environment isolation
 # ---------------------------------------------------------------------------
-run_jean_claude() {
+run_claude_profiles() {
     local machine_dir=$1
     shift
     XDG_CONFIG_HOME="$machine_dir" HOME="$machine_dir" \
     GIT_AUTHOR_NAME="Test User" GIT_AUTHOR_EMAIL="test@example.com" \
     GIT_COMMITTER_NAME="Test User" GIT_COMMITTER_EMAIL="test@example.com" \
-    node "$JEAN_CLAUDE_BIN" "$@"
+    node "$CLAUDE_PROFILES_BIN" "$@"
 }
 
 # ---------------------------------------------------------------------------
@@ -130,7 +130,7 @@ create_test_env() {
             git init > /dev/null 2>&1
             git config user.email "test@example.com"
             git config user.name "Test User"
-            echo '{"version":"2.0.0","managedBy":"jean-claude","lastSync":null,"machineId":"test","platform":"linux","claudeConfigPath":"/test"}' > meta.json
+            echo '{"version":"2.0.0","managedBy":"claude-profiles","lastSync":null,"machineId":"test","platform":"linux","claudeConfigPath":"/test"}' > meta.json
             git add meta.json
             git commit -m "Initial commit" > /dev/null 2>&1
         )
@@ -153,36 +153,36 @@ create_test_env() {
 setup() {
     print_header "Setting up test environment"
 
-    TEST_DIR=$(mktemp -d -t jean-claude-e2e-ticket-1-19.XXXXXX)
+    TEST_DIR=$(mktemp -d -t claude-profiles-e2e-ticket-1-19.XXXXXX)
     print_info "Test directory: $TEST_DIR"
 
     # Build the project
     cd "$(dirname "$0")/../.."
-    print_info "Building jean-claude..."
+    print_info "Building claude-profiles..."
     npm run build > /dev/null 2>&1
 
-    JEAN_CLAUDE_BIN="$(pwd)/dist/index.js"
-    if [ ! -f "$JEAN_CLAUDE_BIN" ]; then
-        echo -e "${RED}Error: jean-claude binary not found at $JEAN_CLAUDE_BIN${NC}"
+    CLAUDE_PROFILES_BIN="$(pwd)/dist/index.js"
+    if [ ! -f "$CLAUDE_PROFILES_BIN" ]; then
+        echo -e "${RED}Error: claude-profiles binary not found at $CLAUDE_PROFILES_BIN${NC}"
         exit 1
     fi
-    print_info "Binary: $JEAN_CLAUDE_BIN"
+    print_info "Binary: $CLAUDE_PROFILES_BIN"
     print_info "Setup complete"
 }
 
 # ===========================================================================
 # Ticket #1: Validate repo contains Claude config before syncing
 # ===========================================================================
-test_ticket_1_rejects_non_jean_claude_repo() {
-    print_header "Ticket #1 - Reject non-jean-claude repo"
+test_ticket_1_rejects_non_claude_profiles_repo() {
+    print_header "Ticket #1 - Reject non-claude-profiles repo"
 
-    # --- Part A: non-jean-claude repo should be rejected ---
-    print_test "#1a: init with non-jean-claude repo warns and can be cancelled"
+    # --- Part A: non-claude-profiles repo should be rejected ---
+    print_test "#1a: init with non-claude-profiles repo warns and can be cancelled"
 
     local env_dir="$TEST_DIR/ticket1"
     mkdir -p "$env_dir"
 
-    # Create a bare repo with non-jean-claude content
+    # Create a bare repo with non-claude-profiles content
     local bare_repo="$env_dir/remote.git"
     local temp_repo="$env_dir/temp-init"
     mkdir -p "$temp_repo"
@@ -204,34 +204,34 @@ test_ticket_1_rejects_non_jean_claude_repo() {
 
     # Pipe "n" to decline the warning prompt
     local output
-    output=$(echo "n" | run_jean_claude "$m1" init --sync --url "$bare_repo" 2>&1)
+    output=$(echo "n" | run_claude_profiles "$m1" init --sync --url "$bare_repo" 2>&1)
     local exit_code=$?
 
     # Assert: warning message about invalid repo
-    assert_output_contains "$output" "does not appear to be a Jean-Claude config repo"
+    assert_output_contains "$output" "does not appear to be a claude-profiles config repo"
 
-    # Assert: init was cancelled (non-zero exit or no .jean-claude setup)
-    if [ $exit_code -ne 0 ] || [ ! -d "$m1/.claude/.jean-claude/.git" ]; then
+    # Assert: init was cancelled (non-zero exit or no .claude-profiles setup)
+    if [ $exit_code -ne 0 ] || [ ! -d "$m1/.claude/.claude-profiles/.git" ]; then
         print_success "Init was cancelled as expected (exit=$exit_code)"
     else
         print_failure "Init should have been cancelled but it completed"
     fi
 
-    # --- Part B: valid jean-claude repo should pass validation ---
-    print_test "#1b: init with valid jean-claude repo succeeds without warning"
+    # --- Part B: valid claude-profiles repo should pass validation ---
+    print_test "#1b: init with valid claude-profiles repo succeeds without warning"
 
     create_test_env "ticket1_valid" true
     local valid_output
-    valid_output=$(run_jean_claude "$TICKET_M1" init --sync --url "$TICKET_REMOTE" 2>&1)
+    valid_output=$(run_claude_profiles "$TICKET_M1" init --sync --url "$TICKET_REMOTE" 2>&1)
     local valid_exit=$?
 
     assert_equals "$valid_exit" "0" "Exit code"
 
     # Should NOT contain the warning
-    if echo "$valid_output" | grep -q "does not appear to be a Jean-Claude config repo"; then
+    if echo "$valid_output" | grep -q "does not appear to be a claude-profiles config repo"; then
         print_failure "Valid repo should not trigger a warning"
     else
-        print_success "No warning for valid jean-claude repo"
+        print_success "No warning for valid claude-profiles repo"
     fi
 }
 
@@ -246,12 +246,12 @@ test_ticket_19_reconfigure_existing_remote() {
     local env_dir="$TEST_DIR/ticket19"
     mkdir -p "$env_dir"
 
-    # Remote 1 (valid jean-claude repo)
+    # Remote 1 (valid claude-profiles repo)
     create_test_env "ticket19_r1" true
     local remote1="$TICKET_REMOTE"
     local m1="$TICKET_M1"
 
-    # Remote 2 (another valid jean-claude repo)
+    # Remote 2 (another valid claude-profiles repo)
     local temp2="$env_dir/temp2"
     mkdir -p "$temp2"
     (
@@ -259,7 +259,7 @@ test_ticket_19_reconfigure_existing_remote() {
         git init > /dev/null 2>&1
         git config user.email "test@example.com"
         git config user.name "Test User"
-        echo '{"version":"2.0.0","managedBy":"jean-claude","lastSync":null,"machineId":"test2","platform":"linux","claudeConfigPath":"/test"}' > meta.json
+        echo '{"version":"2.0.0","managedBy":"claude-profiles","lastSync":null,"machineId":"test2","platform":"linux","claudeConfigPath":"/test"}' > meta.json
         git add meta.json
         git commit -m "Initial commit" > /dev/null 2>&1
     )
@@ -267,16 +267,16 @@ test_ticket_19_reconfigure_existing_remote() {
     git clone --bare "$temp2" "$remote2" > /dev/null 2>&1
     rm -rf "$temp2"
 
-    run_jean_claude "$m1" init --sync --url "$remote1"
+    run_claude_profiles "$m1" init --sync --url "$remote1"
 
     local current_url
-    current_url=$(git -C "$m1/.claude/.jean-claude" remote get-url origin)
+    current_url=$(git -C "$m1/.claude/.claude-profiles" remote get-url origin)
     assert_equals "$current_url" "$remote1" "Initial remote URL"
 
-    run_jean_claude "$m1" sync setup --url "$remote2"
+    run_claude_profiles "$m1" sync setup --url "$remote2"
 
     local new_url
-    new_url=$(git -C "$m1/.claude/.jean-claude" remote get-url origin)
+    new_url=$(git -C "$m1/.claude/.claude-profiles" remote get-url origin)
     assert_equals "$new_url" "$remote2" "Updated remote URL"
 }
 
@@ -284,7 +284,7 @@ test_ticket_19_reconfigure_existing_remote() {
 # Runner
 # ===========================================================================
 setup
-test_ticket_1_rejects_non_jean_claude_repo
+test_ticket_1_rejects_non_claude_profiles_repo
 test_ticket_19_reconfigure_existing_remote
 
 # Summary

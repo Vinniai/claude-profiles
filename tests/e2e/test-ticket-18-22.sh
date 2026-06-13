@@ -27,7 +27,7 @@ TESTS_FAILED=0
 
 # State
 TEST_DIR=""
-JEAN_CLAUDE_BIN=""
+CLAUDE_PROFILES_BIN=""
 
 # Per-test environment variables (set by create_test_env)
 TICKET_REMOTE=""
@@ -133,13 +133,13 @@ assert_output_not_contains() {
 
 # ---------- Run helper ----------
 
-run_jean_claude() {
+run_claude_profiles() {
     local machine_dir=$1
     shift
     XDG_CONFIG_HOME="$machine_dir" HOME="$machine_dir" \
     GIT_AUTHOR_NAME="Test User" GIT_AUTHOR_EMAIL="test@example.com" \
     GIT_COMMITTER_NAME="Test User" GIT_COMMITTER_EMAIL="test@example.com" \
-    node "$JEAN_CLAUDE_BIN" "$@"
+    node "$CLAUDE_PROFILES_BIN" "$@"
 }
 
 # ---------- Per-test environment ----------
@@ -161,7 +161,7 @@ create_test_env() {
             git init > /dev/null 2>&1
             git config user.email "test@example.com"
             git config user.name "Test User"
-            echo '{"version":"2.0.0","managedBy":"jean-claude","lastSync":null,"machineId":"test","platform":"linux","claudeConfigPath":"/test"}' > meta.json
+            echo '{"version":"2.0.0","managedBy":"claude-profiles","lastSync":null,"machineId":"test","platform":"linux","claudeConfigPath":"/test"}' > meta.json
             git add meta.json
             git commit -m "Initial commit" > /dev/null 2>&1
         )
@@ -185,20 +185,20 @@ create_test_env() {
 setup() {
     print_header "Setting up test environment"
 
-    TEST_DIR=$(mktemp -d -t jean-claude-e2e-ticket-18-22.XXXXXX)
+    TEST_DIR=$(mktemp -d -t claude-profiles-e2e-ticket-18-22.XXXXXX)
     print_info "Test directory: $TEST_DIR"
 
-    # Build jean-claude
+    # Build claude-profiles
     cd "$(dirname "$0")/../.."
-    print_info "Building jean-claude..."
+    print_info "Building claude-profiles..."
     npm run build > /dev/null 2>&1
 
-    JEAN_CLAUDE_BIN="$(pwd)/dist/index.js"
-    if [ ! -f "$JEAN_CLAUDE_BIN" ]; then
-        echo -e "${RED}Error: jean-claude binary not found at $JEAN_CLAUDE_BIN${NC}"
+    CLAUDE_PROFILES_BIN="$(pwd)/dist/index.js"
+    if [ ! -f "$CLAUDE_PROFILES_BIN" ]; then
+        echo -e "${RED}Error: claude-profiles binary not found at $CLAUDE_PROFILES_BIN${NC}"
         exit 1
     fi
-    print_info "Binary: $JEAN_CLAUDE_BIN"
+    print_info "Binary: $CLAUDE_PROFILES_BIN"
 
     print_info "Setup complete"
 }
@@ -215,34 +215,34 @@ test_ticket_18_pull_warns_uncommitted_changes() {
 
     # 2. Init m1
     print_test "#18 - Init machine 1"
-    run_jean_claude "$TICKET_M1" init --sync --url "$TICKET_REMOTE" > /dev/null 2>&1
-    assert_dir_exists "$TICKET_M1/.claude/.jean-claude"
+    run_claude_profiles "$TICKET_M1" init --sync --url "$TICKET_REMOTE" > /dev/null 2>&1
+    assert_dir_exists "$TICKET_M1/.claude/.claude-profiles"
 
     # 3. Create content on m1
     echo "# Config from machine 1" > "$TICKET_M1/.claude/CLAUDE.md"
 
     # 4. Push from m1
     print_test "#18 - Push from machine 1"
-    run_jean_claude "$TICKET_M1" sync push > /dev/null 2>&1
-    assert_file_exists "$TICKET_M1/.claude/.jean-claude/CLAUDE.md"
+    run_claude_profiles "$TICKET_M1" sync push > /dev/null 2>&1
+    assert_file_exists "$TICKET_M1/.claude/.claude-profiles/CLAUDE.md"
 
     # 5. Init m2
     print_test "#18 - Init machine 2"
-    run_jean_claude "$TICKET_M2" init --sync --url "$TICKET_REMOTE" > /dev/null 2>&1
-    assert_dir_exists "$TICKET_M2/.claude/.jean-claude"
+    run_claude_profiles "$TICKET_M2" init --sync --url "$TICKET_REMOTE" > /dev/null 2>&1
+    assert_dir_exists "$TICKET_M2/.claude/.claude-profiles"
 
     # 6. Pull on m2 to get m1's content
     print_test "#18 - Pull on machine 2 (initial, with --force)"
-    run_jean_claude "$TICKET_M2" sync pull --force > /dev/null 2>&1
+    run_claude_profiles "$TICKET_M2" sync pull --force > /dev/null 2>&1
     assert_file_exists "$TICKET_M2/.claude/CLAUDE.md"
     assert_file_contains "$TICKET_M2/.claude/CLAUDE.md" "Config from machine 1"
 
-    # 7. Make an uncommitted local edit inside m2's .jean-claude repo
-    echo "local edit that should be preserved" > "$TICKET_M2/.claude/.jean-claude/CLAUDE.md"
+    # 7. Make an uncommitted local edit inside m2's .claude-profiles repo
+    echo "local edit that should be preserved" > "$TICKET_M2/.claude/.claude-profiles/CLAUDE.md"
 
     # 8. Test cancellation - pipe "n" to decline the confirmation prompt
     print_test "#18 - Pull with uncommitted changes warns and cancellation preserves them"
-    output=$(echo "n" | run_jean_claude "$TICKET_M2" sync pull 2>&1) || true
+    output=$(echo "n" | run_claude_profiles "$TICKET_M2" sync pull 2>&1) || true
 
     # 9. Assert: output mentions uncommitted changes or discard warning
     if echo "$output" | grep -qi "uncommitted\|discard\|local change"; then
@@ -251,7 +251,7 @@ test_ticket_18_pull_warns_uncommitted_changes() {
         # In non-TTY environments inquirer may not display the prompt, so we
         # check whether the pull at least did NOT silently overwrite the file.
         print_info "Prompt text not detected (possible non-TTY); checking file preservation instead"
-        if grep -q "local edit" "$TICKET_M2/.claude/.jean-claude/CLAUDE.md" 2>/dev/null; then
+        if grep -q "local edit" "$TICKET_M2/.claude/.claude-profiles/CLAUDE.md" 2>/dev/null; then
             print_success "Local edit preserved (pull did not silently discard)"
         else
             print_failure "Local edit was silently discarded without warning"
@@ -259,14 +259,14 @@ test_ticket_18_pull_warns_uncommitted_changes() {
     fi
 
     # Verify the local edit is still there after cancellation
-    assert_file_contains "$TICKET_M2/.claude/.jean-claude/CLAUDE.md" "local edit"
+    assert_file_contains "$TICKET_M2/.claude/.claude-profiles/CLAUDE.md" "local edit"
 
     # 10. Test --force: should discard local changes and pull
     print_test "#18 - Pull with --force discards uncommitted changes"
-    run_jean_claude "$TICKET_M2" sync pull --force > /dev/null 2>&1
+    run_claude_profiles "$TICKET_M2" sync pull --force > /dev/null 2>&1
 
     # 11. Assert: local edit is gone, original content is restored
-    assert_file_not_contains "$TICKET_M2/.claude/.jean-claude/CLAUDE.md" "local edit"
+    assert_file_not_contains "$TICKET_M2/.claude/.claude-profiles/CLAUDE.md" "local edit"
     assert_file_contains "$TICKET_M2/.claude/CLAUDE.md" "Config from machine 1"
 }
 
@@ -290,20 +290,20 @@ test_ticket_22_push_auto_rebases_on_divergence() {
 
     # 2. Init m1
     print_test "#22 - Init machine 1"
-    run_jean_claude "$TICKET_M1" init --sync --url "$TICKET_REMOTE" > /dev/null 2>&1
-    assert_dir_exists "$TICKET_M1/.claude/.jean-claude"
+    run_claude_profiles "$TICKET_M1" init --sync --url "$TICKET_REMOTE" > /dev/null 2>&1
+    assert_dir_exists "$TICKET_M1/.claude/.claude-profiles"
 
     # 3. Init m2
     print_test "#22 - Init machine 2"
-    run_jean_claude "$TICKET_M2" init --sync --url "$TICKET_REMOTE" > /dev/null 2>&1
-    assert_dir_exists "$TICKET_M2/.claude/.jean-claude"
+    run_claude_profiles "$TICKET_M2" init --sync --url "$TICKET_REMOTE" > /dev/null 2>&1
+    assert_dir_exists "$TICKET_M2/.claude/.claude-profiles"
 
     # 4. m1 creates and pushes a file
     print_test "#22 - Machine 1 pushes a skill file"
     mkdir -p "$TICKET_M1/.claude/skills"
     echo "skill from m1" > "$TICKET_M1/.claude/skills/m1-skill.md"
-    run_jean_claude "$TICKET_M1" sync push > /dev/null 2>&1
-    assert_file_exists "$TICKET_M1/.claude/.jean-claude/skills/m1-skill.md"
+    run_claude_profiles "$TICKET_M1" sync push > /dev/null 2>&1
+    assert_file_exists "$TICKET_M1/.claude/.claude-profiles/skills/m1-skill.md"
 
     # 5. m2 creates a DIFFERENT file and pushes WITHOUT pulling m1's change first
     #    This will cause divergent history. meta.json will conflict (different
@@ -312,7 +312,7 @@ test_ticket_22_push_auto_rebases_on_divergence() {
     mkdir -p "$TICKET_M2/.claude/skills"
     echo "skill from m2" > "$TICKET_M2/.claude/skills/m2-skill.md"
 
-    output=$(run_jean_claude "$TICKET_M2" sync push 2>&1)
+    output=$(run_claude_profiles "$TICKET_M2" sync push 2>&1)
     exit_code=$?
 
     print_info "Push exit code: $exit_code"
@@ -332,7 +332,7 @@ test_ticket_22_push_auto_rebases_on_divergence() {
 
     # 7. Verify convergence - pull on m1 and check both files exist
     print_test "#22 - Convergence: both skills present after pull on m1"
-    run_jean_claude "$TICKET_M1" sync pull --force > /dev/null 2>&1
+    run_claude_profiles "$TICKET_M1" sync pull --force > /dev/null 2>&1
     assert_file_exists "$TICKET_M1/.claude/skills/m1-skill.md"
     assert_file_exists "$TICKET_M1/.claude/skills/m2-skill.md"
     assert_file_contains "$TICKET_M1/.claude/skills/m1-skill.md" "skill from m1"

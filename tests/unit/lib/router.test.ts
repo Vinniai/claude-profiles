@@ -76,6 +76,36 @@ describe('resolveProfileNames', () => {
     // a(1), b(2), c(undefined -> last)
     expect(resolveProfileNames(c, {})).toEqual(['a', 'b', 'c']);
   });
+
+  it('returns an explicit ad-hoc profile list in order', () => {
+    expect(resolveProfileNames(cfg(), { profiles: ['c', 'a'] })).toEqual(['c', 'a']);
+  });
+
+  it('throws on an unknown ad-hoc profile', () => {
+    expect(() => resolveProfileNames(cfg(), { profiles: ['a', 'ghost'] })).toThrow();
+  });
+
+  it('orders unpinned profiles big-first by plan capacity', () => {
+    const c: ProfileConfig = {
+      profiles: {
+        pro: { alias: 'claude-pro', configDir: '/c/pro', plan: 'pro' },
+        small: { alias: 'claude-small', configDir: '/c/small', plan: 'max-5x' },
+        big: { alias: 'claude-big', configDir: '/c/big', plan: 'max-20x' },
+      },
+    };
+    expect(resolveProfileNames(c, {})).toEqual(['big', 'small', 'pro']);
+  });
+
+  it('explicit priority still wins over plan capacity', () => {
+    const c: ProfileConfig = {
+      profiles: {
+        pro: { alias: 'claude-pro', configDir: '/c/pro', plan: 'pro', priority: 1 },
+        big: { alias: 'claude-big', configDir: '/c/big', plan: 'max-20x' },
+      },
+    };
+    // pro is priority 1 (≈ first); big has no priority → derived from capacity (980)
+    expect(resolveProfileNames(c, {})).toEqual(['pro', 'big']);
+  });
 });
 
 describe('orderCandidates', () => {

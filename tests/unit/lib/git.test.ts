@@ -9,7 +9,7 @@ describe('git.ts', () => {
   let tempDir: string;
 
   beforeEach(async () => {
-    tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'jean-claude-git-test-'));
+    tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'claude-profiles-git-test-'));
   });
 
   afterEach(async () => {

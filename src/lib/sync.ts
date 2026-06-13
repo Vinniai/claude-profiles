@@ -102,7 +102,7 @@ async function listFilesRecursive(dir: string, base: string = ''): Promise<strin
 }
 
 export async function syncToClaudeConfig(
-  jeanClaudeDir: string,
+  claudeProfilesDir: string,
   claudeConfigDir: string,
   dryRun = false
 ): Promise<SyncResult[]> {
@@ -114,7 +114,7 @@ export async function syncToClaudeConfig(
   }
 
   for (const mapping of FILE_MAPPINGS) {
-    const sourcePath = path.join(jeanClaudeDir, mapping.source);
+    const sourcePath = path.join(claudeProfilesDir, mapping.source);
     const targetPath = path.join(claudeConfigDir, mapping.target);
 
     if (!fs.existsSync(sourcePath)) {
@@ -162,13 +162,13 @@ export async function syncToClaudeConfig(
 
 export async function importFromClaudeConfig(
   claudeConfigDir: string,
-  jeanClaudeDir: string
+  claudeProfilesDir: string
 ): Promise<SyncResult[]> {
   const results: SyncResult[] = [];
 
   for (const mapping of FILE_MAPPINGS) {
     const sourcePath = path.join(claudeConfigDir, mapping.target);
-    const targetPath = path.join(jeanClaudeDir, mapping.source);
+    const targetPath = path.join(claudeProfilesDir, mapping.source);
 
     if (!fs.existsSync(sourcePath)) {
       continue;
@@ -195,13 +195,13 @@ export async function importFromClaudeConfig(
 
 export async function syncFromClaudeConfig(
   claudeConfigDir: string,
-  jeanClaudeDir: string
+  claudeProfilesDir: string
 ): Promise<SyncResult[]> {
   const results: SyncResult[] = [];
 
   for (const mapping of FILE_MAPPINGS) {
     const sourcePath = path.join(claudeConfigDir, mapping.target);
-    const targetPath = path.join(jeanClaudeDir, mapping.source);
+    const targetPath = path.join(claudeProfilesDir, mapping.source);
 
     if (!fs.existsSync(sourcePath)) {
       // Source doesn't exist - remove target if it exists
@@ -258,7 +258,7 @@ export function createMetaJson(claudeConfigPath: string): MetaJson {
 
   return {
     version: '1.1.0',
-    managedBy: 'jean-claude',
+    managedBy: 'claude-profiles',
     lastSync: null,
     machineId: `${hostname}-${machineId}`,
     platform,
@@ -266,8 +266,8 @@ export function createMetaJson(claudeConfigPath: string): MetaJson {
   };
 }
 
-export async function readMetaJson(jeanClaudeDir: string): Promise<MetaJson | null> {
-  const metaPath = path.join(jeanClaudeDir, 'meta.json');
+export async function readMetaJson(claudeProfilesDir: string): Promise<MetaJson | null> {
+  const metaPath = path.join(claudeProfilesDir, 'meta.json');
   if (!fs.existsSync(metaPath)) {
     return null;
   }
@@ -279,17 +279,17 @@ export async function readMetaJson(jeanClaudeDir: string): Promise<MetaJson | nu
 }
 
 export async function writeMetaJson(
-  jeanClaudeDir: string,
+  claudeProfilesDir: string,
   meta: MetaJson
 ): Promise<void> {
-  const metaPath = path.join(jeanClaudeDir, 'meta.json');
+  const metaPath = path.join(claudeProfilesDir, 'meta.json');
   await fs.writeJson(metaPath, meta, { spaces: 2 });
 }
 
-export async function updateLastSync(jeanClaudeDir: string): Promise<void> {
-  const meta = await readMetaJson(jeanClaudeDir);
+export async function updateLastSync(claudeProfilesDir: string): Promise<void> {
+  const meta = await readMetaJson(claudeProfilesDir);
   if (meta) {
     meta.lastSync = new Date().toISOString();
-    await writeMetaJson(jeanClaudeDir, meta);
+    await writeMetaJson(claudeProfilesDir, meta);
   }
 }

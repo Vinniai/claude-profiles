@@ -5,6 +5,7 @@ import { logger, formatPath } from '../utils/logger.js';
 import { confirm, input, select } from '../utils/prompts.js';
 import {
   loadProfiles,
+  saveProfiles,
   createProfile,
   deleteProfile,
   getProfileConfigDir,
@@ -19,7 +20,12 @@ import {
   type CreateProfileOptions,
 } from '../lib/profiles.js';
 import { getClaudeProfilesDir } from '../lib/paths.js';
-import { ClaudeProfilesError, ErrorCode } from '../types/index.js';
+import {
+  ClaudeProfilesError,
+  ErrorCode,
+  PLAN_TIERS,
+  type PlanTier,
+} from '../types/index.js';
 import fs from 'fs-extra';
 
 const profileCreateCommand = new Command('create')
@@ -33,8 +39,9 @@ const profileCreateCommand = new Command('create')
   .option('--no-share-claude-md', 'Do not share CLAUDE.md with this profile')
   .option('--description <text>', 'Human-friendly description (e.g. "work Max account")')
   .option('--priority <n>', 'Fallback priority (lower is tried first)', (v) => parseInt(v, 10))
+  .option('--plan <tier>', `Subscription tier: ${PLAN_TIERS.join('|')}`)
   .option('--chain <name>', 'Also append this profile to the named fallback chain')
-  .action(async (nameArg: string | undefined, options: { yes?: boolean; shell?: string; shareStatusline?: boolean; shareClaudeMd?: boolean; description?: string; priority?: number; chain?: string }) => {
+  .action(async (nameArg: string | undefined, options: { yes?: boolean; shell?: string; shareStatusline?: boolean; shareClaudeMd?: boolean; description?: string; priority?: number; plan?: string; chain?: string }) => {
     // Verify claude-profiles is initialized
     const jcDir = getClaudeProfilesDir();
     if (!(await fs.pathExists(jcDir))) {
@@ -93,6 +100,16 @@ const profileCreateCommand = new Command('create')
     if (options.description) createOptions.description = options.description;
     if (typeof options.priority === 'number' && !Number.isNaN(options.priority)) {
       createOptions.priority = options.priority;
+    }
+    if (options.plan) {
+      if (!PLAN_TIERS.includes(options.plan as PlanTier)) {
+        throw new ClaudeProfilesError(
+          `Unknown plan "${options.plan}"`,
+          ErrorCode.INVALID_CONFIG,
+          `Choose one of: ${PLAN_TIERS.join(', ')}.`
+        );
+      }
+      createOptions.plan = options.plan as PlanTier;
     }
 
     if (options.shareStatusline !== undefined) {
@@ -196,11 +213,16 @@ const profileListCommand = new Command('list')
         : chalk.red('missing directory');
 
       console.log(`  ${chalk.bold(name)}`);
-      logger.table([
+      const rows: [string, string][] = [
         ['Alias', chalk.cyan(profile.alias)],
         ['Config', formatPath(profile.configDir)],
         ['Status', status],
-      ]);
+      ];
+      if (profile.plan) rows.push(['Plan', chalk.cyan(profile.plan)]);
+      if (profile.weight != null) rows.push(['Weight', String(profile.weight)]);
+      if (profile.priority != null) rows.push(['Priority', String(profile.priority)]);
+      if (profile.description) rows.push(['Description', profile.description]);
+      logger.table(rows);
 
       // Check symlink health
       if (exists) {
@@ -373,10 +395,99 @@ const profileLoginCommand = new Command('login')
     });
   });
 
+interface ProfileSetOptions {
+  weight?: string;
+  priority?: string;
+  description?: string;
+  plan?: string;
+}
+
+const profileSetCommand = new Command('set')
+  .description("Set a profile's routing attributes (weight, plan, priority, description)")
+  .argument('<name>', 'Profile to update')
+  .option('--weight <n>', 'Weight for the weighted strategy (positive number)')
+  .option('--priority <n>', 'Fallback priority (lower is tried first)')
+  .option('--plan <tier>', `Subscription tier: ${PLAN_TIERS.join('|')}`)
+  .option('--description <text>', 'Human-friendly description')
+  .action(async (name: string, options: ProfileSetOptions) => {
+    const config = await loadProfiles();
+    const profile = config.profiles[name];
+    if (!profile) {
+      throw new ClaudeProfilesError(
+        `Profile "${name}" not found`,
+        ErrorCode.NOT_INITIALIZED,
+        `Run 'claude-profiles profile list' to see existing profiles.`
+      );
+    }
+
+    if (
+      options.weight == null &&
+      options.priority == null &&
+      options.plan == null &&
+      options.description == null
+    ) {
+      throw new ClaudeProfilesError(
+        'Nothing to set',
+        ErrorCode.INVALID_CONFIG,
+        'Pass at least one of --weight, --priority, --plan, --description.'
+      );
+    }
+
+    if (options.weight != null) {
+      const w = Number(options.weight);
+      if (!Number.isFinite(w) || w <= 0) {
+        throw new ClaudeProfilesError(
+          `Invalid --weight: "${options.weight}"`,
+          ErrorCode.INVALID_CONFIG,
+          'Provide a positive number.'
+        );
+      }
+      profile.weight = w;
+    }
+
+    if (options.priority != null) {
+      const p = parseInt(options.priority, 10);
+      if (Number.isNaN(p)) {
+        throw new ClaudeProfilesError(
+          `Invalid --priority: "${options.priority}"`,
+          ErrorCode.INVALID_CONFIG,
+          'Provide an integer (lower is tried first).'
+        );
+      }
+      profile.priority = p;
+    }
+
+    if (options.plan != null) {
+      if (!PLAN_TIERS.includes(options.plan as PlanTier)) {
+        throw new ClaudeProfilesError(
+          `Unknown plan "${options.plan}"`,
+          ErrorCode.INVALID_CONFIG,
+          `Choose one of: ${PLAN_TIERS.join(', ')}.`
+        );
+      }
+      profile.plan = options.plan as PlanTier;
+    }
+
+    if (options.description != null) {
+      profile.description = options.description;
+    }
+
+    await saveProfiles(config);
+
+    logger.success(`Updated profile "${name}".`);
+    logger.table([
+      ['Plan', profile.plan ? chalk.cyan(profile.plan) : chalk.dim('(unset)')],
+      ['Weight', profile.weight != null ? chalk.cyan(String(profile.weight)) : chalk.dim('(plan default)')],
+      ['Priority', profile.priority != null ? chalk.cyan(String(profile.priority)) : chalk.dim('(big-first default)')],
+      ['Description', profile.description ? profile.description : chalk.dim('(none)')],
+    ]);
+  });
+
 export const profileCommand = new Command('profile')
   .description('Manage Claude Code profiles for multiple accounts')
   .addCommand(profileCreateCommand)
   .addCommand(profileListCommand)
+  .addCommand(profileSetCommand)
   .addCommand(profileDeleteCommand)
   .addCommand(profileRefreshCommand)
   .addCommand(profileLoginCommand);

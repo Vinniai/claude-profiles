@@ -3,7 +3,7 @@ import fs from 'fs-extra';
 import path from 'path';
 import os from 'os';
 import { simpleGit } from 'simple-git';
-import { JeanClaudeError, ErrorCode } from '../../../src/types/index.js';
+import { ClaudeProfilesError, ErrorCode } from '../../../src/types/index.js';
 
 // Mock prompts module
 vi.mock('../../../src/utils/prompts.js', () => ({
@@ -47,7 +47,7 @@ describe('sync-setup.ts', () => {
   let tempDir: string;
 
   beforeEach(async () => {
-    tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'jean-claude-setup-test-'));
+    tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'claude-profiles-setup-test-'));
     vi.clearAllMocks();
   });
 
@@ -60,7 +60,7 @@ describe('sync-setup.ts', () => {
       // Empty directory, not a git repo
       vi.mocked(testRemoteConnection).mockResolvedValue(true);
       vi.mocked(cloneRepo).mockRejectedValue(
-        new JeanClaudeError('fail', ErrorCode.CLONE_FAILED)
+        new ClaudeProfilesError('fail', ErrorCode.CLONE_FAILED)
       );
 
       await setupGitSync(tempDir, 'https://example.com/repo.git');
@@ -78,7 +78,7 @@ describe('sync-setup.ts', () => {
   });
 
   describe('#35 — Validation error (INVALID_CONFIG) is re-thrown', () => {
-    it('should re-throw INVALID_CONFIG from warnIfNotJeanClaudeRepo', async () => {
+    it('should re-throw INVALID_CONFIG from warnIfNotClaudeProfilesRepo', async () => {
       // Empty directory, not a git repo
       vi.mocked(testRemoteConnection).mockResolvedValue(true);
       // cloneRepo succeeds and creates a repo with a commit (non-empty clone)
@@ -88,7 +88,7 @@ describe('sync-setup.ts', () => {
         await git.init();
         await git.addConfig('user.email', 'test@example.com');
         await git.addConfig('user.name', 'Test');
-        await fs.writeFile(path.join(targetDir, 'README.md'), 'not a jean-claude repo');
+        await fs.writeFile(path.join(targetDir, 'README.md'), 'not a claude-profiles repo');
         await git.add('.');
         await git.commit('initial');
       });
@@ -99,7 +99,7 @@ describe('sync-setup.ts', () => {
 
       await expect(
         setupGitSync(tempDir, 'https://example.com/repo.git')
-      ).rejects.toThrow(JeanClaudeError);
+      ).rejects.toThrow(ClaudeProfilesError);
     });
   });
 
@@ -141,7 +141,7 @@ describe('sync-setup.ts', () => {
     it('should not call input() when urlArg is provided', async () => {
       vi.mocked(testRemoteConnection).mockResolvedValue(true);
       vi.mocked(cloneRepo).mockRejectedValue(
-        new JeanClaudeError('fail', ErrorCode.CLONE_FAILED)
+        new ClaudeProfilesError('fail', ErrorCode.CLONE_FAILED)
       );
 
       await setupGitSync(tempDir, 'https://example.com/repo.git');

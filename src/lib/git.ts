@@ -1,6 +1,6 @@
 import { simpleGit, SimpleGit, SimpleGitOptions } from 'simple-git';
 import type { GitStatus } from '../types/index.js';
-import { JeanClaudeError, ErrorCode } from '../types/index.js';
+import { ClaudeProfilesError, ErrorCode } from '../types/index.js';
 
 export function createGit(baseDir: string): SimpleGit {
   const options: Partial<SimpleGitOptions> = {
@@ -26,7 +26,7 @@ export async function cloneRepo(url: string, targetDir: string): Promise<void> {
     await git.clone(url, targetDir);
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
-    throw new JeanClaudeError(
+    throw new ClaudeProfilesError(
       `Failed to clone repository: ${message}`,
       ErrorCode.CLONE_FAILED,
       'Check that the URL is correct and you have access to the repository.'
@@ -107,13 +107,13 @@ export async function pull(dir: string): Promise<{ success: boolean; message: st
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     if (message.includes('CONFLICT')) {
-      throw new JeanClaudeError(
+      throw new ClaudeProfilesError(
         'Merge conflict detected',
         ErrorCode.MERGE_CONFLICT,
         `Resolve conflicts manually in ${dir} and try again.`
       );
     }
-    throw new JeanClaudeError(
+    throw new ClaudeProfilesError(
       `Git pull failed: ${message}`,
       ErrorCode.NETWORK_ERROR
     );
@@ -159,16 +159,16 @@ export async function commitAndPush(
               await git.env('GIT_EDITOR', 'true').rebase(['--continue']);
             } else {
               await git.rebase(['--abort']);
-              throw new JeanClaudeError(
+              throw new ClaudeProfilesError(
                 `Rebase failed due to conflicts: ${errMsg}`,
                 ErrorCode.MERGE_CONFLICT,
-                'Try running "jean-claude sync pull" to resolve conflicts.'
+                'Try running "claude-profiles sync pull" to resolve conflicts.'
               );
             }
           } else if (errMsg.includes('no such ref') || errMsg.includes("Couldn't find remote ref")) {
             // Remote branch doesn't exist yet — skip rebase, first push will create it
           } else {
-            throw new JeanClaudeError(
+            throw new ClaudeProfilesError(
               `Pull --rebase failed: ${errMsg}`,
               ErrorCode.NETWORK_ERROR,
               'Check your network connection and try again.'
@@ -183,7 +183,7 @@ export async function commitAndPush(
         return { committed: true, pushed: true };
       } catch (err) {
         const errMsg = err instanceof Error ? err.message : String(err);
-        throw new JeanClaudeError(
+        throw new ClaudeProfilesError(
           `Push failed: ${errMsg}`,
           ErrorCode.NETWORK_ERROR,
           'Check your network connection and try again.'

@@ -3,7 +3,7 @@ import path from 'path';
 import os from 'os';
 import { getConfigPaths, getClaudeProfilesDir } from './paths.js';
 import { ClaudeProfilesError, ErrorCode } from '../types/index.js';
-import type { ProfileConfig, Profile } from '../types/index.js';
+import type { ProfileConfig, Profile, PlanTier } from '../types/index.js';
 
 const PROFILES_FILE = 'profiles.json';
 
@@ -51,6 +51,8 @@ export interface CreateProfileOptions {
   description?: string;
   /** Lower numbers are tried first when running without an explicit chain. */
   priority?: number;
+  /** Anthropic subscription tier (feeds default weight + ordering). */
+  plan?: PlanTier;
 }
 
 export async function createProfile(
@@ -117,6 +119,7 @@ export async function createProfile(
   };
   if (options.description) profile.description = options.description;
   if (typeof options.priority === 'number') profile.priority = options.priority;
+  if (options.plan) profile.plan = options.plan;
   config.profiles[name] = profile;
   await saveProfiles(config);
 
