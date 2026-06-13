@@ -6,10 +6,12 @@ import {
   ClaudeProfilesError,
   ErrorCode,
   ROUTING_STRATEGIES,
+  type HourWindow,
   type RoutingPolicy,
   type RoutingStrategy,
   type RoutingConfig,
 } from '../types/index.js';
+import { formatHour } from '../lib/cutover.js';
 
 const orange = chalk.hex('#FF6B4A');
 
@@ -35,7 +37,34 @@ function describePolicy(p?: RoutingPolicy): string {
     parts.push(`avoid if resets < ${p.avoidIfWindowEndsWithinMin}m`);
   if (p.preferIfWindowEndsWithinMin != null)
     parts.push(`prefer if resets < ${p.preferIfWindowEndsWithinMin}m`);
+  if (p.preferHours != null)
+    parts.push(`prefer ${formatHour(p.preferHours.start)}–${formatHour(p.preferHours.end)}`);
   return parts.join(', ');
+}
+
+/**
+ * Parse a `21-1` / `9-17` time-of-day range into an {@link HourWindow}. Hours
+ * are 0–23 integers (local time); `start > end` wraps past midnight.
+ */
+function parseHourRange(value: string): HourWindow {
+  const m = /^\s*(\d{1,2})\s*-\s*(\d{1,2})\s*$/.exec(value);
+  const fail = () =>
+    new ClaudeProfilesError(
+      `Invalid value for --prefer-hours: "${value}"`,
+      ErrorCode.INVALID_CONFIG,
+      'Use START-END with 24-hour integers, e.g. "21-1" for 9pm–1am.'
+    );
+  if (!m) throw fail();
+  const start = Number(m[1]);
+  const end = Number(m[2]);
+  if (start > 23 || end > 23) throw fail();
+  if (start === end)
+    throw new ClaudeProfilesError(
+      `--prefer-hours start and end must differ ("${value}")`,
+      ErrorCode.INVALID_CONFIG,
+      'An empty window never matches; widen the range.'
+    );
+  return { start, end };
 }
 
 const strategyShowCommand = new Command('show')
@@ -119,6 +148,7 @@ interface PolicyOptions {
   minSession?: string;
   avoidWithin?: string;
   preferWithin?: string;
+  preferHours?: string;
   clear?: boolean;
 }
 
@@ -144,6 +174,7 @@ function buildPolicyPatch(options: PolicyOptions): RoutingPolicy {
   if (ms != null) policy.minSessionRemaining = ms;
   if (aw != null) policy.avoidIfWindowEndsWithinMin = aw;
   if (pw != null) policy.preferIfWindowEndsWithinMin = pw;
+  if (options.preferHours != null) policy.preferHours = parseHourRange(options.preferHours);
   return policy;
 }
 
@@ -155,6 +186,7 @@ const strategyPolicyCommand = new Command('policy')
   .option('--min-session <pct>', 'Require ≥ this % of SESSION budget remaining')
   .option('--avoid-within <min>', 'Skip a profile whose session resets within N minutes')
   .option('--prefer-within <min>', 'Prefer a profile whose session resets within N minutes')
+  .option('--prefer-hours <range>', 'Prefer a profile during local hours START-END (e.g. 21-1)')
   .option('--clear', 'Remove the policy at the chosen scope')
   .action(async (options: PolicyOptions) => {
     const config = await loadProfiles();

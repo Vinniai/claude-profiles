@@ -3,6 +3,8 @@ import path from 'path';
 import { getClaudeProfilesDir } from './paths.js';
 import { mergeBudget } from './usage.js';
 import type {
+  BurnRate,
+  CapOverride,
   ProfileRuntimeState,
   RoutingEventKind,
   RuntimeStateFile,
@@ -128,6 +130,34 @@ export async function clearUsage(name: string): Promise<void> {
   const next = { ...current };
   delete next.usage;
   // Replace wholesale so the `usage` key is actually removed.
+  const state = await loadState();
+  state.profiles[name] = next;
+  await saveState(state);
+}
+
+/** Persist a freshly-computed burn-rate estimate for a profile. */
+export async function recordBurn(name: string, burn: BurnRate): Promise<void> {
+  await updateProfileState(name, { burn });
+}
+
+/**
+ * Raise (or set) a profile's session cap — the "push past the danger zone"
+ * control. The override is keyed to the account and auto-expires at `until`
+ * (typically the current 5h window's reset) so it never outlives its window.
+ */
+export async function setCapOverride(
+  name: string,
+  override: CapOverride,
+): Promise<void> {
+  await updateProfileState(name, { capOverride: override });
+}
+
+/** Remove a profile's cap override, restoring the configured cap. */
+export async function clearCapOverride(name: string): Promise<void> {
+  const current = await getProfileState(name);
+  if (!current.capOverride) return;
+  const next = { ...current };
+  delete next.capOverride;
   const state = await loadState();
   state.profiles[name] = next;
   await saveState(state);

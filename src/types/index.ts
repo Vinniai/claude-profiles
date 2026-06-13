@@ -188,11 +188,35 @@ export interface RoutingPolicy {
    * up a soon-to-reset budget before it's wasted. Applied as an ordering boost.
    */
   preferIfWindowEndsWithinMin?: number;
+  /**
+   * Prefer this profile during a recurring time-of-day window (local machine
+   * time), e.g. `{ start: 21, end: 1 }` to favour it from 9pm until 1am — handy
+   * for draining an account whose owner doesn't use it overnight. `start`/`end`
+   * are integer hours (0–23); when `start > end` the window wraps past midnight.
+   * Applied as an ordering boost, gated by the same eligibility requirements as
+   * every other rule.
+   */
+  preferHours?: HourWindow;
+}
+
+/** A recurring local-time window, half-open `[start:00, end:00)`. */
+export interface HourWindow {
+  /** Hour the window opens (0–23, local time). */
+  start: number;
+  /** Hour the window closes (0–23, local time). `start > end` wraps midnight. */
+  end: number;
 }
 
 export interface RoutingConfig {
   strategy?: RoutingStrategy;
   policy?: RoutingPolicy;
+  /**
+   * Proactively switch accounts at a turn boundary when a routing rule (over-cap,
+   * schedule window opening, drain becoming active) favours a different account.
+   * Applies to supervised interactive chain sessions. Defaults to ON; set false
+   * (or pass `--no-auto-switch`) to keep a session pinned to its launch account.
+   */
+  autoSwitch?: boolean;
 }
 
 /**
@@ -200,7 +224,10 @@ export interface RoutingConfig {
  * (`manual` — a user/Claude chose to switch via the channel/`switch_account`)
  * from **automatic** routing failovers (`limit`/`auth`/`server` — triggered by
  * the Claude CLI returning an error). `launch` is the initial strategy-driven
- * selection; `exhausted` means no account was left to try.
+ * selection; `exhausted` means no account was left to try. `policy` is an
+ * automatic, proactive switch made at a turn boundary because a routing *rule*
+ * (over-cap, schedule window, drain) now favours a different account — not an
+ * error, but the router choosing to move work before a limit is hit.
  */
 export type RoutingEventKind =
   | 'launch'
@@ -208,6 +235,7 @@ export type RoutingEventKind =
   | 'limit'
   | 'auth'
   | 'server'
+  | 'policy'
   | 'exhausted';
 
 export const ROUTING_EVENT_KINDS: readonly RoutingEventKind[] = [
@@ -216,6 +244,7 @@ export const ROUTING_EVENT_KINDS: readonly RoutingEventKind[] = [
   'limit',
   'auth',
   'server',
+  'policy',
   'exhausted',
 ] as const;
 
@@ -295,6 +324,48 @@ export interface ProfileRuntimeState {
   usage?: UsageBudget;
   /** ISO timestamp this profile was last selected — drives `round-robin`. */
   lastUsedAt?: string;
+  /**
+   * Live "push past the cap" override. Raises this account's effective session
+   * cap (e.g. 90 → 95) so routing keeps using it into the danger zone. Keyed to
+   * the account and auto-expires at {@link CapOverride.until} (the current 5h
+   * window's reset), so it never silently outlives the window it was meant for.
+   */
+  capOverride?: CapOverride;
+  /**
+   * Burn-rate estimate derived from successive statusline snapshots — drives the
+   * "time/turns until cutover" countdown. Best-effort; absent until two
+   * observations exist.
+   */
+  burn?: BurnRate;
+}
+
+/** A temporary, per-account raise of the session cap (the "danger zone" push). */
+export interface CapOverride {
+  /** New effective session cap, percent used (0–100). */
+  sessionCapPct: number;
+  /** ISO timestamp the override expires (typically the session window reset). */
+  until?: string;
+  /** ISO timestamp the override was set, for display. */
+  setAt?: string;
+}
+
+/** Consumption-rate estimate for the rolling session window. */
+export interface BurnRate {
+  /** Session usage percent consumed per minute (EWMA-smoothed). */
+  sessionPctPerMin?: number;
+  /** Session usage percent consumed per meaningful change (≈ per turn). */
+  pctPerTurn?: number;
+  /** ISO timestamp this estimate was last updated. */
+  at?: string;
+  /**
+   * Slow-moving baseline for the per-minute rate. The statusLine fires on every
+   * render (seconds apart), so we measure consumption against this anchor and
+   * only advance it once a real ≥1-minute window has elapsed — otherwise rapid
+   * re-renders would divide a usage delta by a near-zero time delta.
+   */
+  anchorPct?: number;
+  /** ISO timestamp of the current per-minute measurement anchor. */
+  anchorAt?: string;
 }
 
 export interface RuntimeStateFile {
@@ -330,4 +401,17 @@ export interface HandoffRecord {
   pendingFailover?: boolean;
   /** Failure kind that triggered the pending failover, if any. */
   failoverKind?: string;
+  /**
+   * Proactive auto-switch directive, set by the Stop hook when a routing rule
+   * (over-cap / schedule / drain) decides work should move to a different account
+   * at this turn boundary. The interactive supervisor reads it after `claude`
+   * exits and relaunches on {@link pendingSwitchTo}, then the SessionStart hook
+   * restores context. Unlike {@link pendingFailover} this is NOT an error — the
+   * current account is still healthy; it is the router pre-empting a limit.
+   */
+  pendingSwitchTo?: string;
+  /** Human-readable reason for the pending switch (e.g. "entered preferred hours"). */
+  pendingSwitchReason?: string;
+  /** Routing-event kind for the pending switch (always `'policy'` today). */
+  pendingSwitchKind?: RoutingEventKind;
 }

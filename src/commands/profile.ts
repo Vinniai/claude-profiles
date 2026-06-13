@@ -20,6 +20,7 @@ import {
   type CreateProfileOptions,
 } from '../lib/profiles.js';
 import { getClaudeProfilesDir } from '../lib/paths.js';
+import { readAccountInfo } from '../lib/account-info.js';
 import {
   ClaudeProfilesError,
   ErrorCode,
@@ -27,6 +28,53 @@ import {
   type PlanTier,
 } from '../types/index.js';
 import fs from 'fs-extra';
+
+/**
+ * Read a profile's plan tier from the Claude CLI's own config and persist it,
+ * unless the user already pinned one explicitly. Best-effort and quiet on
+ * failure — it only ever *adds* information, never blocks the calling command.
+ *
+ * @returns the detected {@link PlanTier}, or `undefined` when nothing was read.
+ */
+async function autoDetectAndPersistPlan(
+  name: string,
+  configDir: string,
+): Promise<PlanTier | undefined> {
+  const info = await readAccountInfo(configDir);
+  if (!info?.plan) return undefined;
+
+  const config = await loadProfiles();
+  const profile = config.profiles[name];
+  if (!profile) return info.plan;
+
+  if (profile.plan === info.plan) {
+    logger.dim(`Plan: ${profile.plan} (detected${info.email ? ` — ${info.email}` : ''})`);
+    return info.plan;
+  }
+
+  // Honor an explicit, conflicting choice but tell the user what we saw.
+  if (profile.plan) {
+    logger.dim(
+      `Detected plan ${info.plan}${info.email ? ` (${info.email})` : ''}, ` +
+        `but keeping your set plan ${profile.plan}. ` +
+        `Run \`claude-profiles profile set ${name} --plan ${info.plan}\` to change it.`
+    );
+    return info.plan;
+  }
+
+  profile.plan = info.plan;
+  // Backfill a human-friendly description from the account identity if the user
+  // never set one (e.g. "Ada — ada@example.com").
+  if (!profile.description) {
+    const label = [info.displayName, info.email].filter(Boolean).join(' — ');
+    if (label) profile.description = label;
+  }
+  await saveProfiles(config);
+  logger.success(
+    `Detected plan: ${info.plan}${info.email ? ` (${info.email})` : ''} — saved to profile "${name}".`
+  );
+  return info.plan;
+}
 
 function buildProfileCreate(cmdName: string): Command {
   return new Command(cmdName)
@@ -148,6 +196,12 @@ function buildProfileCreate(cmdName: string): Command {
     logger.step(1, 3, 'Creating profile directory and symlinks...');
     const profile = await createProfile(name, createOptions);
     logger.success('Profile directory created');
+
+    // If the dir was already authenticated (e.g. re-adopting an existing
+    // ~/.claude-<name>) and the user didn't pin a plan, read it from the CLI.
+    if (!createOptions.plan) {
+      await autoDetectAndPersistPlan(name, profile.configDir);
+    }
 
     // Install shell alias
     logger.step(2, 3, 'Installing shell alias...');
@@ -341,6 +395,10 @@ const profileRefreshCommand = new Command('refresh')
     logger.dim(`Refreshing symlinks for profile "${name}"...`);
     const created = await refreshSymlinks(name);
     logger.success(`Symlinks refreshed: ${created.join(', ')}`);
+
+    // Re-sync the plan tier from the CLI's config while we're here.
+    const profile = config.profiles[name];
+    if (profile) await autoDetectAndPersistPlan(name, profile.configDir);
   });
 
 function buildProfileLogin(cmdName: string): Command {
@@ -396,6 +454,11 @@ function buildProfileLogin(cmdName: string): Command {
       });
       child.on('close', () => resolve());
     });
+
+    // Now that the account is authenticated, read its plan tier straight from
+    // the CLI's own config and persist it — saves the user setting `--plan` by
+    // hand, and keeps routing weights accurate. Best-effort; never fails login.
+    await autoDetectAndPersistPlan(name, profile.configDir);
   });
 }
 

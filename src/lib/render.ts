@@ -7,6 +7,16 @@ import type {
   RoutingEventKind,
 } from '../types/index.js';
 import { routingLabel, routingCategory } from './routing-log.js';
+import type { CutoverInfo, DrainInfo, ScheduleInfo } from './cutover.js';
+import { formatHour } from './cutover.js';
+import { formatMinutes } from './statusline-render.js';
+import {
+  buildResetTimeline,
+  formatSpan,
+  type AccountPace,
+  type PaceInfo,
+  type PaceVerdict,
+} from './pace.js';
 
 export type { UsageWindow, UsageBudget, RoutingStrategy };
 
@@ -237,6 +247,71 @@ export interface StatusRow {
   kind?: RoutingEventKind;
   session?: UsageWindow;
   weekly?: UsageWindow;
+  /**
+   * Live login truth from `claude auth status` (when probed). `undefined` means
+   * the status was not checked (offline mode, or `claude` unavailable).
+   */
+  login?: 'in' | 'out';
+  /** Account email, when known from a live probe or the saved config. */
+  email?: string;
+  /** Normalized plan tier to show alongside the account line. */
+  plan?: string;
+  /** Cutover countdown (cap, ETA, over-cap) for the session window, when known. */
+  cutover?: CutoverInfo;
+  /** Conditional "drain the expiring session" rule state, when configured. */
+  drain?: DrainInfo;
+  /** Conditional "prefer during these hours" rule state, when configured. */
+  schedule?: ScheduleInfo;
+  /** True when routing would move to this profile next. */
+  upNext?: boolean;
+  /** Session + weekly efficiency read-out (the "pace"), when usage is known. */
+  pace?: AccountPace;
+}
+
+/** A compact `· cap90 · ~18m/~6t` (or `· ⚠ OVER cap90`) cutover suffix. */
+function cutoverSuffix(c: CutoverInfo | undefined): string {
+  if (!c || c.capPct == null) return '';
+  const star = c.overridden ? '*' : '';
+  if (c.overCap) return '  ' + chalk.red(`⚠ OVER cap${c.capPct}${star}`);
+  const bits: string[] = [`cap${c.capPct}${star}`];
+  const mins = formatMinutes(c.etaMin);
+  const eta: string[] = [];
+  if (mins) eta.push(`~${mins}`);
+  if (c.etaTurns != null) eta.push(`~${c.etaTurns}t`);
+  if (eta.length) bits.push(eta.join('/'));
+  return '  ' + chalk.dim(bits.join(' · '));
+}
+
+/** The `drain` rule line: condition + current state (active / conserving / idle). */
+function drainLine(d: DrainInfo): string {
+  const cond =
+    `prefer when ≤${d.preferWithinMin}m to reset` +
+    (d.weeklyFloorPct != null ? ` & weekly ≥${d.weeklyFloorPct}%` : '');
+
+  if (d.state === 'active') {
+    const resets =
+      d.windowEndsInMin != null
+        ? `  ${chalk.dim(`· window resets in ${Math.round(d.windowEndsInMin)}m`)}`
+        : '';
+    return `  drain    ${chalk.cyan('▶ ACTIVE — preferred')}${resets}`;
+  }
+  if (d.state === 'conserving') {
+    const wk =
+      d.weeklyRemainingPct != null && d.weeklyFloorPct != null
+        ? ` — weekly ${Math.round(d.weeklyRemainingPct)}% < ${d.weeklyFloorPct}%`
+        : '';
+    return `  drain    ${chalk.yellow(`conserving${wk}`)}  ${chalk.dim('· last-resort')}`;
+  }
+  return `  drain    ${chalk.dim(`${cond}   · idle`)}`;
+}
+
+/** The `schedule` rule line: time-of-day window + current state. */
+function scheduleLine(s: ScheduleInfo): string {
+  const window = `${formatHour(s.hours.start)}–${formatHour(s.hours.end)}`;
+  if (s.state === 'active') {
+    return `  schedule ${chalk.cyan('▶ ACTIVE — preferred')}  ${chalk.dim(`· ${window}`)}`;
+  }
+  return `  schedule ${chalk.dim(`prefer ${window}   · idle`)}`;
 }
 
 /**
@@ -251,7 +326,8 @@ export function renderStatusDashboard(rows: StatusRow[]): string {
 
     // Name line
     const desc = row.description ? chalk.dim(` — ${row.description}`) : '';
-    lines.push(orange('■') + ' ' + chalk.bold(row.name) + desc);
+    const nextBadge = row.upNext ? ' ' + chalk.cyan('▶ up next') : '';
+    lines.push(orange('■') + ' ' + chalk.bold(row.name) + desc + nextBadge);
 
     // Status line
     let statusStr: string;
@@ -271,12 +347,22 @@ export function renderStatusDashboard(rows: StatusRow[]): string {
       lines.push(`  via      ${kindBadge(row.kind)}`);
     }
 
-    // Session budget line
+    // Live account line — login truth + identity, when we probed it.
+    if (row.login || row.email || row.plan) {
+      const bits: string[] = [];
+      if (row.login === 'in') bits.push(chalk.green('logged in'));
+      else if (row.login === 'out') bits.push(chalk.red('logged out'));
+      const tail = [row.email, row.plan].filter(Boolean).join(' · ');
+      if (tail) bits.push(chalk.dim(tail));
+      if (bits.length) lines.push(`  account  ${bits.join('  ')}`);
+    }
+
+    // Session budget line — with the cutover countdown appended when known.
     if (row.session != null) {
       const rem = pctRemaining(row.session);
       const resetLabel = windowEndsLabel(row.session.resetAt, now);
       const resetPart = resetLabel ? `  ${chalk.dim(resetLabel)}` : '';
-      lines.push(`  session  ${budgetBar(rem)}${resetPart}`);
+      lines.push(`  session  ${budgetBar(rem)}${resetPart}${cutoverSuffix(row.cutover)}`);
     }
 
     // Weekly budget line
@@ -286,6 +372,12 @@ export function renderStatusDashboard(rows: StatusRow[]): string {
       const resetPart = resetLabel ? `  ${chalk.dim(resetLabel)}` : '';
       lines.push(`  weekly   ${budgetBar(rem)}${resetPart}`);
     }
+
+    // Drain rule line — only when the profile has a drain rule configured.
+    if (row.drain) lines.push(drainLine(row.drain));
+
+    // Schedule rule line — only when a time-of-day preference is configured.
+    if (row.schedule) lines.push(scheduleLine(row.schedule));
 
     blocks.push(lines.join('\n'));
   }
@@ -337,7 +429,170 @@ export function renderRoutingLog(events: RoutingEvent[], now: Date = new Date())
   return events.map((ev) => formatRoutingEvent(ev, now)).join('\n');
 }
 
-// ─── 6. Impure thin wrappers ─────────────────────────────────────────────────
+// ─── 6. Pace view (reset timeline + efficiency verdict) ──────────────────────
+
+/** Verdict → glyph + color. Shared by the full view and the compact summary. */
+function verdictGlyph(v: PaceVerdict): { glyph: string; color: (s: string) => string } {
+  switch (v) {
+    case 'too-fast':
+      return { glyph: '▲', color: chalk.red };
+    case 'on-pace':
+      return { glyph: '●', color: chalk.green };
+    case 'underusing':
+      return { glyph: '▽', color: chalk.yellow };
+    case 'idle':
+      return { glyph: '◌', color: chalk.dim };
+    case 'capped':
+      return { glyph: '⊘', color: chalk.red };
+    default:
+      return { glyph: '·', color: chalk.dim };
+  }
+}
+
+function fmtRate(p: number | undefined): string {
+  return p == null ? '?' : p.toFixed(2);
+}
+
+/** Session efficiency cell, e.g. `● 0.21%/m (ideal 0.23)` / `◌ idle` / `⊘ capped`. */
+function sessionPaceLabel(info: PaceInfo | undefined): string {
+  if (!info || info.verdict === 'unknown') return chalk.dim('— n/a');
+  const { glyph, color } = verdictGlyph(info.verdict);
+  if (info.verdict === 'capped') return color(`${glyph} capped`);
+  if (info.verdict === 'idle') return color(`${glyph} idle`);
+  const rate = fmtRate(info.actualPctPerMin);
+  const ideal =
+    info.idealPctPerMin != null ? chalk.dim(` (ideal ${fmtRate(info.idealPctPerMin)})`) : '';
+  return color(`${glyph} ${rate}%/m`) + ideal;
+}
+
+/** Weekly cell, e.g. `▽ 12% slack` / `● on track` / `▲ ahead` / `⊘ capped`. */
+function weeklyPaceLabel(info: PaceInfo | undefined): string {
+  if (!info || info.verdict === 'unknown') return chalk.dim('— n/a');
+  const { glyph, color } = verdictGlyph(info.verdict);
+  if (info.verdict === 'capped') return color(`${glyph} capped`);
+  if (info.verdict === 'underusing') {
+    const slack = info.leftoverPct != null ? `${Math.round(info.leftoverPct)}% slack` : 'slack';
+    return color(`${glyph} ${slack}`);
+  }
+  if (info.verdict === 'too-fast') return color(`${glyph} ahead`);
+  return color(`${glyph} on track`);
+}
+
+export interface PaceRecommendation {
+  name: string;
+  reason?: string;
+}
+
+/**
+ * The full `claude-profiles pace` view: a shared RESETS timeline (session ▽ /
+ * weekly ▼ markers laid on one horizon) stacked above a PACE verdict block and a
+ * single "best now" recommendation.
+ */
+export function renderPaceView(opts: {
+  rows: StatusRow[];
+  recommendation?: PaceRecommendation;
+  now?: Date;
+  width?: number;
+}): string {
+  const now = opts.now ?? new Date();
+  const rows = opts.rows;
+  if (rows.length === 0) return chalk.dim('No accounts to pace.');
+
+  const width = Math.max(16, opts.width ?? 32);
+  const nameWidth = Math.max(6, ...rows.map((r) => r.name.length));
+  const out: string[] = [];
+
+  // ── RESETS timeline ──
+  const geo = buildResetTimeline({
+    accounts: rows.map((r) => ({ name: r.name, session: r.session, weekly: r.weekly })),
+    now,
+    width,
+  });
+  const axis = chalk.dim('├' + '─'.repeat(Math.max(0, width - 2)) + '┤');
+  const horizonLabel = chalk.dim('+' + formatSpan(geo.horizonMin));
+  out.push(
+    chalk.bold('RESETS') +
+      '  ' +
+      ' '.repeat(nameWidth) +
+      ' ' +
+      chalk.dim('now ') +
+      axis +
+      ' ' +
+      horizonLabel
+  );
+
+  const sessColor = chalk.cyan;
+  const weekColor = chalk.magenta;
+  for (const grow of geo.rows) {
+    const cells: string[] = new Array(width).fill(' ');
+    const labels: string[] = [];
+    // Weekly first so a colliding session marker (the nearer-term constraint) wins the cell.
+    const ordered = [...grow.markers].sort((a) => (a.kind === 'weekly' ? -1 : 1));
+    for (const m of ordered) {
+      const glyph = m.kind === 'session' ? '▽' : '▼';
+      const color = m.kind === 'session' ? sessColor : weekColor;
+      cells[m.col] = color(glyph);
+      labels.push(color(`${glyph}${formatSpan(m.inMin)}`));
+    }
+    const track = chalk.dim('│') + cells.join('');
+    const labelStr = labels.length ? '  ' + labels.join(chalk.dim(' · ')) : '';
+    out.push(' ' + chalk.bold(grow.name.padEnd(nameWidth)) + ' ' + track + labelStr);
+  }
+
+  // ── PACE verdicts ──
+  out.push('');
+  out.push(
+    chalk.bold('PACE') +
+      '  ' +
+      chalk.dim('▲ too fast · ● on pace · ▽ underusing · ◌ idle · ⊘ capped')
+  );
+  const sessCells = rows.map((r) => sessionPaceLabel(r.pace?.session));
+  const sessWidth = Math.max(...sessCells.map(visibleLen));
+  rows.forEach((r, i) => {
+    const sess = sessCells[i];
+    const sessPad = ' '.repeat(Math.max(0, sessWidth - visibleLen(sess)));
+    const wk = weeklyPaceLabel(r.pace?.weekly);
+    const bind = r.pace?.binding ? chalk.dim(`  · ${r.pace.binding}-bound`) : '';
+    out.push(
+      ' ' +
+        chalk.bold(r.name.padEnd(nameWidth)) +
+        '  sess ' +
+        sess +
+        sessPad +
+        '   wk ' +
+        wk +
+        bind
+    );
+  });
+
+  if (opts.recommendation) {
+    const reason = opts.recommendation.reason
+      ? chalk.dim(`  (${opts.recommendation.reason})`)
+      : '';
+    out.push('');
+    out.push(' ' + chalk.cyan('→ best now: ') + chalk.cyan.bold(opts.recommendation.name) + reason);
+  }
+
+  return out.join('\n');
+}
+
+/**
+ * A single compact pace line for the landing / chain-status dashboards:
+ * `pace  josh ●·▽  lockie ▲·●  trev ◌·▲   → lockie`
+ */
+export function paceSummaryLine(rows: StatusRow[]): string {
+  if (rows.length === 0) return '';
+  const cells = rows.map((r) => {
+    const sg = verdictGlyph(r.pace?.session?.verdict ?? 'unknown');
+    const wg = verdictGlyph(r.pace?.weekly?.verdict ?? 'unknown');
+    return `${chalk.bold(r.name)} ${sg.color(sg.glyph)}${chalk.dim('·')}${wg.color(wg.glyph)}`;
+  });
+  const pick = rows.find((r) => r.upNext);
+  const best = pick ? '   ' + chalk.cyan('→ ' + chalk.bold(pick.name)) : '';
+  return chalk.dim('pace  ') + cells.join('  ') + best;
+}
+
+// ─── 7. Impure thin wrappers ─────────────────────────────────────────────────
 
 export function printTransition(opts: TransitionOpts): void {
   console.log(renderTransition(opts));
@@ -353,4 +608,13 @@ export function printStatusDashboard(rows: StatusRow[]): void {
 
 export function printRoutingLog(events: RoutingEvent[], now: Date = new Date()): void {
   console.log(renderRoutingLog(events, now));
+}
+
+export function printPaceView(opts: {
+  rows: StatusRow[];
+  recommendation?: PaceRecommendation;
+  now?: Date;
+  width?: number;
+}): void {
+  console.log(renderPaceView(opts));
 }

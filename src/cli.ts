@@ -16,11 +16,18 @@ import {
   hookCommand,
   strategyCommand,
   usageCommand,
+  statuslineCommand,
+  cutoverCommand,
+  paceCommand,
   channelCommand,
 } from './commands/index.js';
 import { ClaudeProfilesError } from './types/index.js';
 import { printLogo } from './utils/logo.js';
+import { logger } from './utils/logger.js';
 import { loadProfiles } from './lib/profiles.js';
+import { loadState } from './lib/state.js';
+import { buildStatusRows } from './lib/status.js';
+import { printStatusDashboard, paceSummaryLine } from './lib/render.js';
 import { parseProfileToken } from './lib/profile-spec.js';
 
 const require = createRequire(import.meta.url);
@@ -182,6 +189,9 @@ export function createProgram(): Command {
   program.addCommand(runCommand);
   program.addCommand(strategyCommand);
   program.addCommand(usageCommand);
+  program.addCommand(statuslineCommand);
+  program.addCommand(cutoverCommand);
+  program.addCommand(paceCommand);
   program.addCommand(channelCommand);
   program.addCommand(handoffCommand);
   program.addCommand(initCommand);
@@ -198,11 +208,75 @@ export function createProgram(): Command {
   return program;
 }
 
+/** Commands hidden from the landing screen's quick-reference. */
+const LANDING_HIDDEN = new Set(['help', 'hook', 'pull', 'push', 'status']);
+
+/**
+ * The bare `claude-profiles` (no-arg) landing screen: lead with the user's
+ * profiles and their usage limits, then a compact command quick-reference.
+ * Stays fully offline (no `claude` spawn) so it renders instantly.
+ */
+async function showLanding(program: Command): Promise<void> {
+  printLogo();
+
+  let hasProfiles = false;
+  try {
+    const config = await loadProfiles();
+    const names = Object.keys(config.profiles ?? {});
+    if (names.length > 0) {
+      hasProfiles = true;
+      const state = await loadState();
+      const rows = await buildStatusRows(config, state, { offline: true });
+      logger.heading('Your profiles');
+      console.log();
+      printStatusDashboard(rows);
+      const pace = paceSummaryLine(rows);
+      if (pace) {
+        console.log();
+        console.log(pace);
+      }
+      console.log();
+    }
+  } catch {
+    // Not initialized / unreadable config — fall through to the command help.
+  }
+
+  if (!hasProfiles) {
+    logger.dim('No profiles configured yet.');
+    logger.dim('Get started:  claude-profiles create <name>   then   claude-profiles login <name>');
+    console.log();
+  }
+
+  logger.heading('Commands');
+  const rows: [string, string][] = [];
+  for (const cmd of program.commands) {
+    const name = cmd.name();
+    // `Command` carries an undocumented `_hidden` flag for `{ hidden: true }`.
+    const hidden = (cmd as unknown as { _hidden?: boolean })._hidden;
+    if (hidden || LANDING_HIDDEN.has(name)) continue;
+    rows.push([name, cmd.description()]);
+  }
+  logger.table(rows);
+  console.log();
+  logger.dim('Run a profile:   claude-profiles <profile> -- -p "hi"');
+  logger.dim('Full help:       claude-profiles --help');
+}
+
 export async function run(argv: string[]): Promise<void> {
   const program = createProgram();
 
   // Global error handling
   program.exitOverride();
+
+  // Bare invocation → a profiles-first landing screen instead of raw help.
+  if (argv.length <= 2) {
+    try {
+      await showLanding(program);
+    } catch (err) {
+      if (process.env.DEBUG) console.error(err);
+    }
+    return;
+  }
 
   try {
     const expanded = await expandProfileShortcut(argv, program);
