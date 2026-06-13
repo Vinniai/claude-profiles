@@ -50,6 +50,13 @@ Three in-session helpers keep you efficient without thinking about it:
 - **`claude-profiles pace`** — an efficiency cockpit. It lays every account's session and weekly resets onto one shared timeline and scores each account's burn against the *ideal* rate (the %/min that lands you exactly at the cap when the window resets). At a glance you see who is burning **too fast**, who is leaving budget **unspent**, and the single best account to use right now.
 - **`claude-profiles cutover`** — live control of the handoff point. See the active account's cap and ETA, `push` past the cap to squeeze out a window, or force a handoff `now`.
 - **Auto-switch at the turn boundary** (on by default) — between turns, an interactive session proactively hops to a better account when the current one is over its cap, a preferred-hours window opens, or a soon-to-reset window is worth draining. Pin a session with `run --no-auto-switch`.
+- **`claude-profiles statusline`** — a stacked in-session banner. A `model · branch` header sits over one row per account — the current session **and** the account you'd switch to next — each showing live 5h + 7d budget bars and a status note (`switch ~ETA`, `cooldown`, or `↑ next`). Install it once with `claude-profiles statusline --install`; `CLAUDE_PROFILES_STATUSLINE=one-line` collapses it to a single compact row.
+
+  ```text
+  Opus 4.8 · ⎇ main
+  ▸ josh    5h ▓▓▓▓▓▓▓▓░░  78%  7d ▓▓░░░░░░░░  22%   switch ~1m
+    lockie  5h ▓░░░░░░░░░   5%  7d ░░░░░░░░░░   4%   ↑ next
+  ```
 
 > 📊 See the [live showcase](docs/showcase.html), [strategy deep-dive](docs/strategic-routing.html), and [routing log & labels](docs/routing-log-and-labels.html) for the full visual walkthrough.
 
@@ -533,7 +540,7 @@ claude-alice  # Profile alias is ready
 | `claude-profiles strategy` | Show / set how the router picks among healthy profiles |
 | `claude-profiles pace` | Efficiency cockpit — a shared reset timeline + per-account pace verdict (too fast / on pace / underusing) + the best account to use right now |
 | `claude-profiles cutover` | Live cutover controls: cap, countdown, `push` past the limit, force a `now` handoff |
-| `claude-profiles statusline` | Install / preview the in-session statusline (account, budget, cutover ETA, who's next) |
+| `claude-profiles statusline` | Install / preview the in-session **stacked banner** — a `model · branch` header over one row per account (the current session + the up-next account), each with live 5h + 7d budget bars and a status note (`switch ~ETA`, `cooldown`, or `↑ next`). `CLAUDE_PROFILES_STATUSLINE=one-line` collapses it to a single compact row |
 | `claude-profiles usage report [--json] [--window <dur>]` | Hard token counts + estimated cost per account, measured from Claude's own session transcripts (TUI **and** headless) |
 | `claude-profiles usage` | Inspect / set per-profile session & weekly budgets |
 | `claude-profiles channel` | Run the Channel sidecar (health events + mid-run switching) |
@@ -548,6 +555,7 @@ claude-alice  # Profile alias is ready
 | `CLAUDE_PROFILES_CLAUDE_BIN` | Override the `claude` binary (tests / custom installs) |
 | `CLAUDE_PROFILES_CHAIN`, `CLAUDE_PROFILES_THREAD` | Set by the supervisor when launching; read by the continuity hooks (internal) |
 | `CLAUDE_PROFILES_NO_AUTOSWITCH` | Set to `1` to pin a session to its launch account (same as `run --no-auto-switch`) — disables proactive turn-boundary switching |
+| `CLAUDE_PROFILES_STATUSLINE` | Set to `one-line` to render the statusline as a single compact row instead of the default stacked banner |
 
 > An existing `~/.claude/.jean-claude` state directory is migrated automatically to `~/.claude/.claude-profiles` on first run.
 

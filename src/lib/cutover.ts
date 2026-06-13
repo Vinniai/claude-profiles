@@ -367,6 +367,13 @@ export interface UpNext {
   name: string | null;
   /** That account's remaining session budget (percent), when known. */
   remainingPct?: number;
+  /** That account's remaining WEEKLY budget (percent) — so you don't switch
+   *  onto an account that's weekly-capped. */
+  weeklyRemainingPct?: number;
+  /** That account's current session used-percent — drives the "fresh" read. */
+  sessionUsedPct?: number;
+  /** That account's session reset time (ISO) — drives "resets in …". */
+  sessionResetAt?: string;
 }
 
 /**
@@ -387,11 +394,15 @@ export function resolveUpNext(
   const pool = healthyFirst.length > 0 ? healthyFirst : ordered;
   const next = pool.find((c) => c.name !== current) ?? null;
   if (!next) return { name: null };
-  const remaining =
-    next.usage?.session?.usedPct != null
-      ? clamp(100 - next.usage.session.usedPct, 0, 100)
-      : undefined;
-  return { name: next.name, remainingPct: remaining };
+  const sessionUsed = next.usage?.session?.usedPct;
+  const weeklyUsed = next.usage?.weekly?.usedPct;
+  return {
+    name: next.name,
+    remainingPct: sessionUsed != null ? clamp(100 - sessionUsed, 0, 100) : undefined,
+    weeklyRemainingPct: weeklyUsed != null ? clamp(100 - weeklyUsed, 0, 100) : undefined,
+    sessionUsedPct: sessionUsed,
+    sessionResetAt: next.usage?.session?.resetAt,
+  };
 }
 
 // ──────────────────────────────────────────────────────────────────────────

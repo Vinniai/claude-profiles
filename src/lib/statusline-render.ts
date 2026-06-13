@@ -116,7 +116,7 @@ export function renderBar(usedPct: number, width = 10): string {
   return '▓'.repeat(filled) + '░'.repeat(Math.max(0, width - filled));
 }
 
-/** Compact "time until reset", e.g. `2h10m`, `45m`, `now`. */
+/** Compact "time until reset", e.g. `2h10m`, `45m`, `5d3h`, `now`. */
 export function formatResetIn(resetIso: string | undefined, now: Date): string | undefined {
   if (!resetIso) return undefined;
   const ms = Date.parse(resetIso) - now.getTime();
@@ -124,9 +124,14 @@ export function formatResetIn(resetIso: string | undefined, now: Date): string |
   if (ms <= 0) return 'now';
   const mins = Math.round(ms / 60_000);
   if (mins < 60) return `${mins}m`;
-  const h = Math.floor(mins / 60);
-  const m = mins % 60;
-  return m === 0 ? `${h}h` : `${h}h${m}m`;
+  if (mins < 1440) {
+    const h = Math.floor(mins / 60);
+    const m = mins % 60;
+    return m === 0 ? `${h}h` : `${h}h${m}m`;
+  }
+  const d = Math.floor(mins / 1440);
+  const h = Math.floor((mins % 1440) / 60);
+  return h === 0 ? `${d}d` : `${d}d${h}h`;
 }
 
 /** Painter abstraction so color can be disabled (NO_COLOR) without branching. */
@@ -180,21 +185,58 @@ export function formatMinutes(min: number | undefined): string | undefined {
 }
 
 /**
- * Render the cutover tail: the cap marker, the time/turns countdown, and who's
- * up next. Returns undefined when there is nothing to say (no cap in force).
+ * Format the up-next account WITH its routing-relevant headroom:
+ *   `lockie`                       (name only — nothing else known)
+ *   `lockie 88%`                   (free session budget)
+ *   `lockie 88% (wk 70% · fresh)`  (free session · weekly headroom · freshness)
  *
- *   `cap90 · ~18m/~6t → lockie`           (approaching)
- *   `⚠ OVER cap90 → lockie`               (over the cap, handoff staged)
- *   `cap95* · ~30m → lockie`              (* = pushed past the configured cap)
+ * Freshness reads the next account's session window: a barely-used window is
+ * `fresh` (you get a full run), otherwise we show when it resets so you know how
+ * much of a window you'd be stepping into. Returns undefined with no target.
+ */
+export function upNextTarget(
+  upNext: UpNext | undefined,
+  now: Date,
+  p: Painter,
+): string | undefined {
+  const name = upNext?.name ?? undefined;
+  if (!name) return undefined;
+
+  const free =
+    upNext?.remainingPct != null ? ` ${p.bold(`${Math.round(upNext.remainingPct)}%`)}` : '';
+
+  const detail: string[] = [];
+  if (upNext?.weeklyRemainingPct != null) {
+    detail.push(`wk ${Math.round(upNext.weeklyRemainingPct)}%`);
+  }
+  const used = upNext?.sessionUsedPct;
+  if (used != null && used <= 15) {
+    detail.push('fresh');
+  } else if (upNext?.sessionResetAt) {
+    const resetIn = formatResetIn(upNext.sessionResetAt, now);
+    if (resetIn && resetIn !== 'now') detail.push(`resets ${resetIn}`);
+  }
+  const tail = detail.length ? ` ${p.dim(`(${detail.join(' · ')})`)}` : '';
+  return `${name}${free}${tail}`;
+}
+
+/**
+ * Render the cutover tail: the cap marker, the time/turns countdown, and who's
+ * up next (with their headroom). Returns undefined when no cap is in force.
+ *
+ *   `cap90 · ~18m/~6t → lockie 88% (wk 70% · fresh)`   (approaching)
+ *   `⚠ OVER cap90 → lockie 88% (wk 70%)`               (over the cap, staged)
+ *   `cap95* · ~30m → lockie`                           (* = pushed past the cap)
  */
 export function renderCutover(
   cutover: CutoverInfo | undefined,
   upNext: UpNext | undefined,
   p: Painter,
+  now: Date = new Date(),
 ): string | undefined {
   if (!cutover || cutover.capPct == null) return undefined;
-  const nextName = upNext?.name ?? undefined;
-  const arrow = nextName ? ` ${p.dim('→')} ${nextName}` : '';
+  const target = upNextTarget(upNext, now, p);
+  const arrow = target ? ` ${p.dim('→')} ${target}` : '';
   const star = cutover.overridden ? '*' : '';
   const capLabel = `cap${cutover.capPct}${star}`;
 
@@ -210,6 +252,104 @@ export function renderCutover(
   return `${p.dim(capLabel)}${eta}${arrow}`;
 }
 
+/**
+ * The routing segment for the metrics line: the cutover countdown when a cap is
+ * in force, else a bare `→ next` so the up-next account is always surfaced.
+ */
+export function renderRouting(
+  cutover: CutoverInfo | undefined,
+  upNext: UpNext | undefined,
+  now: Date,
+  p: Painter,
+): string | undefined {
+  const cut = renderCutover(cutover, upNext, p, now);
+  if (cut) return cut;
+  const target = upNextTarget(upNext, now, p);
+  return target ? `${p.dim('→')} ${target}` : undefined;
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// Stacked banner — one row per account (current + up-next), 5h + 7d meters
+// ──────────────────────────────────────────────────────────────────────────
+
+/** Color bucket for a row's trailing note. */
+export type NoteKind = 'switch' | 'cooldown' | 'next' | 'plain';
+
+export interface AccountBannerRow {
+  name: string;
+  /** `current` is marked ▸ and bold; `next` carries the `↑ next` note. */
+  marker: 'current' | 'next' | 'none';
+  session?: UsageWindow;
+  weekly?: UsageWindow;
+  /** Trailing status, e.g. `switch ~1m` / `cooldown 2h` / `↑ next`. */
+  note?: string;
+  noteKind?: NoteKind;
+}
+
+function paintNote(p: Painter, kind: NoteKind | undefined, s: string): string {
+  switch (kind) {
+    case 'cooldown':
+      return p.crit(s);
+    case 'switch':
+      return p.warn(s);
+    case 'next':
+      return p.dim(s);
+    default:
+      return s;
+  }
+}
+
+/** `5h ▓▓▓░░░░░░░ 78%` — a labeled mini meter (no reset; the row stays compact). */
+function bannerWindow(label: string, w: UsageWindow | undefined, p: Painter, barW: number): string {
+  if (!w || w.usedPct == null) {
+    return `${p.dim(label)} ${p.dim('░'.repeat(barW))} ${p.dim('  ?')}`;
+  }
+  const pct = w.usedPct;
+  const level = usageLevel(pct);
+  const bar = paintLevel(p, level, renderBar(pct, barW));
+  const pctStr = paintLevel(p, level, `${pct}%`.padStart(4));
+  return `${p.dim(label)} ${bar} ${pctStr}`;
+}
+
+/**
+ * Render the stacked account banner:
+ *
+ *   Opus 4.8 · main
+ *   ▸ josh    5h ▓▓▓▓▓▓▓▓░░ 78%  7d ▓▓░░░░░░░░ 22%   switch ~1m
+ *     lockie  5h ░░░░░░░░░░  5%  7d ░░░░░░░░░░  4%   ↑ next
+ *
+ * The header is `model · branch` (no account / project term). Each account row
+ * shows its 5-hour and 7-day windows as meters, with a trailing switchover ETA,
+ * cooldown countdown, or `↑ next` marker. Newline-joined; empty when no rows.
+ */
+export function renderStackedBanner(opts: {
+  header?: string;
+  rows: AccountBannerRow[];
+  painter?: Painter;
+  barWidth?: number;
+}): string {
+  const p = opts.painter ?? plainPainter;
+  const barW = opts.barWidth ?? 10;
+  const rows = opts.rows;
+  if (rows.length === 0) return opts.header ? p.dim(opts.header) : '';
+
+  const nameW = Math.max(...rows.map((r) => r.name.length));
+  const lines: string[] = [];
+  if (opts.header) lines.push(p.dim(opts.header));
+
+  for (const r of rows) {
+    const isCurrent = r.marker === 'current';
+    const prefix = isCurrent ? p.bold('▸') : ' ';
+    const namePadded = r.name.padEnd(nameW);
+    const name = isCurrent ? p.bold(namePadded) : namePadded;
+    const sess = bannerWindow('5h', r.session, p, barW);
+    const week = bannerWindow('7d', r.weekly, p, barW);
+    const note = r.note ? `   ${paintNote(p, r.noteKind, r.note)}` : '';
+    lines.push(`${prefix} ${name}  ${sess}  ${week}${note}`);
+  }
+  return lines.join('\n');
+}
+
 export interface RenderStatusLineOptions {
   account?: string;
   now?: Date;
@@ -220,13 +360,25 @@ export interface RenderStatusLineOptions {
   cutover?: CutoverInfo;
   /** The account routing would move to next. */
   upNext?: UpNext;
+  /**
+   * Two-line banner: a context line (account · model · branch · project) over a
+   * metrics line (5h │ 7d │ routing). Surfaces the weekly window and the up-next
+   * account's headroom that don't fit the compact single line.
+   */
+  twoLine?: boolean;
 }
 
 /**
- * Render the full status line:
- *   `work │ ⎇ main │ Opus 4.8 │ proj │ 5h ▓▓▓░░░░░░░ 32% · 2h10m`
+ * Render the status line.
  *
- * Segments with no data are omitted. The rate bar is absent until Claude Code
+ * One-line (default):
+ *   `work │ ⎇ main │ Opus 4.8 │ proj │ 5h ▓▓▓░░░░░░░ 32% · 2h10m │ cap90 ~18m → lockie`
+ *
+ * Two-line (`twoLine: true`):
+ *   `josh · Opus 4.8 · ⎇ main · proj`
+ *   `5h ▓▓▓░ 32% · 2h10m │ 7d ▓▓ 22% · 5d │ cap90 · ~18m → lockie 88% (wk 70% · fresh)`
+ *
+ * Segments with no data are omitted. The rate bars are absent until Claude Code
  * populates `rate_limits` (early in a session) — by design, not an error.
  */
 export function renderStatusLine(
@@ -235,29 +387,41 @@ export function renderStatusLine(
 ): string {
   const now = opts.now ?? new Date();
   const p = opts.painter ?? plainPainter;
-  const segments: string[] = [];
 
-  if (opts.account) segments.push(p.bold(opts.account));
-  if (input.gitBranch) segments.push(`${p.dim('⎇')} ${input.gitBranch}`);
-  if (input.model?.display_name) segments.push(input.model.display_name);
-
+  const account = opts.account ? p.bold(opts.account) : undefined;
+  const branch = input.gitBranch ? `${p.dim('⎇')} ${input.gitBranch}` : undefined;
+  const model = input.model?.display_name;
   const dir = input.workspace?.project_dir ?? input.workspace?.current_dir;
-  if (dir) {
-    const base = dir.replace(/\/+$/, '').split('/').pop();
-    if (base) segments.push(p.dim(base));
-  }
+  const base = dir ? dir.replace(/\/+$/, '').split('/').pop() : undefined;
+  const proj = base ? p.dim(base) : undefined;
 
   const budget = budgetFromStatusLine(input, now);
   const session = renderWindow('5h', budget?.session, now, p);
+  const weekly = renderWindow('7d', budget?.weekly, now, p);
+
+  if (opts.twoLine) {
+    const bar = ` ${p.dim('│')} `;
+    const context = [account, model, branch, proj]
+      .filter((s): s is string => Boolean(s))
+      .join(` ${p.dim('·')} `);
+    const routing = renderRouting(opts.cutover, opts.upNext, now, p);
+    const metrics = [session, weekly, routing]
+      .filter((s): s is string => Boolean(s))
+      .join(bar);
+    return [context, metrics].filter((s) => s.length > 0).join('\n');
+  }
+
+  const segments: string[] = [];
+  if (account) segments.push(account);
+  if (branch) segments.push(branch);
+  if (model) segments.push(model);
+  if (proj) segments.push(proj);
   if (session) segments.push(session);
 
-  const cutover = renderCutover(opts.cutover, opts.upNext, p);
+  const cutover = renderCutover(opts.cutover, opts.upNext, p, now);
   if (cutover) segments.push(cutover);
 
-  if (opts.showWeekly) {
-    const weekly = renderWindow('7d', budget?.weekly, now, p);
-    if (weekly) segments.push(weekly);
-  }
+  if (opts.showWeekly && weekly) segments.push(weekly);
 
   return segments.join(` ${p.dim('│')} `);
 }

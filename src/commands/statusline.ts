@@ -14,10 +14,14 @@ import {
 } from '../lib/cutover.js';
 import {
   renderStatusLine,
+  renderStackedBanner,
   budgetFromStatusLine,
+  formatMinutes,
+  formatResetIn,
   plainPainter,
   type StatusLineInput,
   type Painter,
+  type AccountBannerRow,
 } from '../lib/statusline-render.js';
 import {
   installStatusLine,
@@ -26,6 +30,7 @@ import {
 } from '../lib/statusline-install.js';
 import { getSettingsPath } from '../lib/hooks-install.js';
 import { logger } from '../utils/logger.js';
+import type { UsageBudget } from '../types/index.js';
 
 /**
  * `claude-profiles statusline`
@@ -130,6 +135,8 @@ async function renderFromStdin(): Promise<void> {
   const budget = budgetFromStatusLine(input, now);
   let cutover: CutoverInfo | undefined;
   let upNext: UpNext | undefined;
+  let nextUsage: UsageBudget | undefined;
+  let nextState: Awaited<ReturnType<typeof getProfileState>> | undefined;
 
   // Side effect: cache the live snapshot + burn rate for chain status / routing,
   // and compute the cutover countdown + up-next. All best-effort — persistence
@@ -171,24 +178,102 @@ async function renderFromStdin(): Promise<void> {
         liveUsage: budget,
         now,
       });
+
+      // The up-next account's own cached 5h/7d windows + health drive its banner
+      // row (its limits live in state.json — we never have its live stdin).
+      if (upNext?.name) {
+        nextState = await getProfileState(upNext.name);
+        nextUsage = nextState.usage;
+      }
     }
   } catch {
     /* never let persistence or routing math break the status bar */
   }
 
-  process.stdout.write(
-    renderStatusLine(input, { account, now, painter: pickPainter(), cutover, upNext }),
-  );
+  const painter = pickPainter();
+
+  // One-line opt-out for narrow terminals: CLAUDE_PROFILES_STATUSLINE=one-line.
+  const mode = process.env.CLAUDE_PROFILES_STATUSLINE;
+  if (mode === 'one-line') {
+    process.stdout.write(
+      renderStatusLine(input, {
+        account,
+        now,
+        painter,
+        cutover,
+        upNext,
+        showWeekly: process.env.CLAUDE_PROFILES_STATUSLINE_WEEKLY === '1',
+      }),
+    );
+    return;
+  }
+
+  // Default: stacked banner — `model · branch` header over one row per account
+  // (current + up-next), each with its own 5h + 7d meters and a status note.
+  const header = [input.model?.display_name, input.gitBranch ? `⎇ ${input.gitBranch}` : undefined]
+    .filter((s): s is string => Boolean(s))
+    .join(' · ');
+
+  const rows: AccountBannerRow[] = [];
+  if (account) {
+    const row: AccountBannerRow = {
+      name: account,
+      marker: 'current',
+      session: budget?.session,
+      weekly: budget?.weekly,
+    };
+    if (cutover?.overCap && cutover.capPct != null) {
+      row.note = `⚠ OVER cap${cutover.capPct}`;
+      row.noteKind = 'cooldown';
+    } else if (cutover?.etaMin != null) {
+      const eta = formatMinutes(cutover.etaMin);
+      if (eta) {
+        row.note = `switch ~${eta}`;
+        row.noteKind = 'switch';
+      }
+    }
+    if (!row.note) {
+      const resetIn = formatResetIn(budget?.session?.resetAt, now);
+      if (resetIn) {
+        row.note = `resets ${resetIn}`;
+        row.noteKind = 'next';
+      }
+    }
+    rows.push(row);
+  }
+  if (upNext?.name) {
+    const row: AccountBannerRow = {
+      name: upNext.name,
+      marker: 'next',
+      session: nextUsage?.session,
+      weekly: nextUsage?.weekly,
+    };
+    const cooldownUntil = nextState?.cooldownUntil;
+    const cooling = cooldownUntil && Date.parse(cooldownUntil) > now.getTime();
+    if (cooling) {
+      const left = formatResetIn(cooldownUntil!, now);
+      row.note = left ? `cooldown ${left}` : 'cooldown';
+      row.noteKind = 'cooldown';
+    } else if (nextState?.needsAuth) {
+      row.note = 'needs login';
+      row.noteKind = 'cooldown';
+    } else {
+      row.note = '↑ next';
+      row.noteKind = 'next';
+    }
+    rows.push(row);
+  }
+
+  process.stdout.write(renderStackedBanner({ header, rows, painter }));
 }
 
 export const statuslineCommand = new Command('statusline')
   .description(
-    'Claude Code status-line provider: account + git + model + 5h rate-limit bar',
+    'Claude Code status-line provider: a stacked banner — `model · branch` over one row per account (current + up-next), each with live 5h + 7d budget bars and a status note (switch ETA, cooldown, or ↑ next). Set CLAUDE_PROFILES_STATUSLINE=one-line for a single compact row',
   )
   .option('--install', 'Install this as the statusLine in shared settings.json')
   .option('--uninstall', 'Remove the statusLine from shared settings.json')
   .option('--force', 'With --install, overwrite an existing custom statusLine')
-  .option('--weekly', '(reserved) also show the 7-day window')
   .action(async (opts: { install?: boolean; uninstall?: boolean; force?: boolean }) => {
     if (opts.install) {
       const { installed, conflict } = await installStatusLine(
