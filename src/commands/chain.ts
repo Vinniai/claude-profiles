@@ -20,6 +20,7 @@ import {
   isHealthy,
   cooldownRemainingMs,
 } from '../lib/state.js';
+import { ensureHooksInstalled } from '../lib/hooks-install.js';
 import { ClaudeProfilesError, ErrorCode } from '../types/index.js';
 
 function parseProfilesList(raw: string): string[] {
@@ -50,6 +51,16 @@ const chainCreateCommand = new Command('create')
       const profiles = parseProfilesList(options.profiles);
       const created = await createChain(name, profiles);
       logger.success(`Chain "${name}" created: ${created.join(' → ')}`);
+
+      // Out-of-the-box continuity: install the failover/handoff hooks so context
+      // carries across accounts. They no-op outside chain-launched sessions.
+      try {
+        if (await ensureHooksInstalled()) {
+          logger.dim('Installed continuity hooks in ~/.claude/settings.json.');
+        }
+      } catch {
+        // Non-fatal — the chain still works without continuity hooks.
+      }
 
       if (options.alias === false) return;
 

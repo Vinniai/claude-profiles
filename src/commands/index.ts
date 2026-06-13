@@ -6,3 +6,5 @@ export { profileCommand } from './profile.js';
 export { syncCommand } from './sync.js';
 export { runCommand } from './run.js';
 export { chainCommand } from './chain.js';
+export { handoffCommand } from './handoff.js';
+export { hookCommand } from './hook.js';

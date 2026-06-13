@@ -91,11 +91,33 @@ Everything after `--` is forwarded verbatim to `claude`.
 | Mode | Behavior |
 |------|----------|
 | **Headless** (`-p`/`--print`) | Each profile is tried in order. On a **usage-limit (429)**, **server error (5xx/overloaded)**, or **auth/expired token**, a cooldown is recorded and the next profile is tried. A *generic* crash (any other non-zero exit) is surfaced immediately — no silent reroute. If every profile is exhausted you get `ALL_PROFILES_EXHAUSTED` summarizing each failure. |
-| **Interactive** (the TUI) | A long-lived session can't be rerouted mid-flight, so the *first healthy* (non-cooled-down) profile in the chain is chosen at launch. If all are cooling down, the first is launched anyway (its limit may have reset). |
+| **Interactive** (the TUI, default) | The *first healthy* (non-cooled-down) profile in the chain is launched. A supervisor relaunches the next healthy account if `claude` exits after a limit, restoring context (see [Cross-session continuity](#cross-session-continuity-handoff)). If all are cooling down, the first is launched anyway (its limit may have reset). |
 
 Cooldowns: rate limits use the reset time from the error when available, else **1 hour**; server errors use **2 minutes**; auth failures flag the profile as *needs auth* until you re-run `profile login`. Health lives in `state.json`, kept separate from `profiles.json` so concurrent runs don't collide.
 
 > Need a custom `claude` binary (or to run the e2e test)? Set `CLAUDE_PROFILES_CLAUDE_BIN`.
+
+## Cross-session continuity (handoff)
+
+Interactive is the **default, standard run mode** — `claude-profiles run --chain default` (and the generated `claude-<chain>` alias) launches the normal `claude` TUI, not headless `-p`. Because a long-lived TUI can't be swapped mid-conversation, failover here means **relaunch-with-context**: when a session ends after a limit, the next launch picks a healthy account and **continues the conversation** rather than starting over.
+
+This is powered by a **shared directory** and a set of **auto-installed hooks**:
+
+- **Shared store:** `~/.claude/.claude-profiles/handoff/<chain>/current.json` — lives outside any single profile, so context is portable across accounts. It holds the chain's "thread": last profile, a running summary, the transcript reference, and a `pendingFailover` flag.
+- **Hooks** (added to your shared `~/.claude/settings.json`, tagged and removable):
+  - `Stop` / `SessionEnd` / `PreCompact` → snapshot the conversation to the shared store; if the last turn hit a limit/auth error, record the active profile's cooldown and set `pendingFailover`.
+  - `SessionStart` → **only after a failover**, inject the prior summary via `additionalContext` so the new account picks up seamlessly, then clear the flag.
+
+Continuity kicks in **only after a failover** — a clean session ends with no `pendingFailover`, so a fresh launch never re-injects last conversation's context. Use `run --new` to force a fresh thread.
+
+The hooks **no-op unless a session was launched through a chain** (they key off `CLAUDE_PROFILES_CHAIN`), so your normal `claude` usage is completely unaffected. They're installed automatically on `chain create` / first chain `run`; manage them explicitly with:
+
+```bash
+claude-profiles handoff status        # hooks installed? stored threads?
+claude-profiles handoff enable         # install the hooks
+claude-profiles handoff disable        # remove them
+claude-profiles handoff clear [chain]  # drop stored context (one chain, or all)
+```
 
 ## Profiles
 
@@ -207,9 +229,18 @@ claude-work  # Profile alias is ready
 | `claude-profiles chain status` | Show per-profile health |
 | `claude-profiles chain reset [profile]` | Clear cooldowns / needs-auth |
 | `claude-profiles chain delete <name>` | Delete a chain |
-| `claude-profiles run --chain <name> -- <claude args>` | Run with failover |
+| `claude-profiles run --chain <name> -- <claude args>` | Run with failover (`--new` for a fresh thread) |
 | `claude-profiles run --profile <name> -- <claude args>` | Run a single profile |
+| `claude-profiles handoff status / enable / disable / clear` | Manage cross-session continuity |
 | `claude-profiles sync push / pull / status / setup` | Git sync |
+
+### Environment variables
+
+| Variable | Purpose |
+|----------|---------|
+| `CLAUDE_CONFIG_DIR` | Isolates a profile's OAuth login (set automatically per profile) |
+| `CLAUDE_PROFILES_CLAUDE_BIN` | Override the `claude` binary (tests / custom installs) |
+| `CLAUDE_PROFILES_CHAIN`, `CLAUDE_PROFILES_THREAD` | Set by the supervisor when launching; read by the continuity hooks (internal) |
 
 > The legacy `jean-claude` command is still installed as an alias of `claude-profiles`, and an existing `~/.claude/.jean-claude` state directory is migrated automatically on first run.
 
@@ -224,8 +255,9 @@ npm run test:unit:watch  # watch mode
 npm run test:coverage    # coverage report
 npm run test:integration # integration tests
 
-# Failover end-to-end (mock claude, no account needed)
+# Failover + continuity end-to-end (mock claude, no account needed)
 bash tests/e2e/test-fallback.sh
+bash tests/e2e/test-handoff.sh
 ```
 
 #### Unit Tests
@@ -233,7 +265,9 @@ bash tests/e2e/test-fallback.sh
 Fast, isolated tests for core logic:
 - Profile creation, symlinks, and duplicate prevention
 - Error/limit classification (`claude-errors`) and router ordering/failover
+- Interactive supervisor relaunch logic
 - Chain CRUD and alias generation
+- Continuity: handoff records, transcript summarisation, hook install/merge
 - File sync and metadata operations
 - Error handling and types
 

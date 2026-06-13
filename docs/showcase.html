@@ -1,0 +1,1496 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>claude-profiles — Run every Claude account as one</title>
+  <meta name="description" content="Run multiple Claude Code OAuth accounts side by side with automatic failover and continuous conversation context." />
+  <style>
+    /* ── CSS Variables ──────────────────────────────────────────── */
+    :root {
+      --bg:          #0D0D0D;
+      --bg-card:     #161616;
+      --bg-code:     #0A0A0A;
+      --bg-nav:      rgba(13, 13, 13, 0.85);
+      --border:      rgba(255, 255, 255, 0.08);
+      --border-accent: rgba(255, 107, 74, 0.35);
+      --accent:      #FF6B4A;
+      --accent-dim:  rgba(255, 107, 74, 0.15);
+      --accent-glow: rgba(255, 107, 74, 0.06);
+      --text:        #E8E8E8;
+      --text-muted:  #888;
+      --text-faint:  #555;
+      --heading:     #F5F5F5;
+      --font-sans:   -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      --font-mono:   "SF Mono", "Fira Code", "Fira Mono", "Cascadia Code", Consolas, "Courier New", monospace;
+      --radius:      8px;
+      --radius-lg:   12px;
+      --shadow:      0 4px 24px rgba(0, 0, 0, 0.5);
+    }
+
+    /* ── Reset & Base ───────────────────────────────────────────── */
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    html {
+      scroll-behavior: smooth;
+      font-size: 16px;
+    }
+
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: var(--font-sans);
+      line-height: 1.65;
+      -webkit-font-smoothing: antialiased;
+      -moz-osx-font-smoothing: grayscale;
+    }
+
+    /* ── Typography ─────────────────────────────────────────────── */
+    h1, h2, h3, h4 {
+      color: var(--heading);
+      line-height: 1.25;
+      font-weight: 600;
+      letter-spacing: -0.02em;
+    }
+
+    h1 { font-size: clamp(2rem, 5vw, 3.25rem); font-weight: 700; }
+    h2 { font-size: clamp(1.4rem, 3vw, 2rem); }
+    h3 { font-size: 1.1rem; font-weight: 600; }
+
+    p { margin-bottom: 1rem; }
+    p:last-child { margin-bottom: 0; }
+
+    a {
+      color: var(--accent);
+      text-decoration: none;
+      transition: opacity 0.15s;
+    }
+    a:hover { opacity: 0.75; }
+
+    code {
+      font-family: var(--font-mono);
+      font-size: 0.875em;
+      background: rgba(255, 107, 74, 0.1);
+      color: var(--accent);
+      padding: 0.15em 0.4em;
+      border-radius: 4px;
+      border: 1px solid rgba(255, 107, 74, 0.2);
+    }
+
+    /* ── Layout Helpers ─────────────────────────────────────────── */
+    .container {
+      max-width: 1080px;
+      margin: 0 auto;
+      padding: 0 24px;
+    }
+
+    .section {
+      padding: 96px 0;
+    }
+
+    .section + .section {
+      border-top: 1px solid var(--border);
+    }
+
+    .section-label {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 0.75rem;
+      font-weight: 600;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      color: var(--accent);
+      margin-bottom: 16px;
+    }
+
+    .section-label::before {
+      content: '';
+      display: block;
+      width: 16px;
+      height: 1px;
+      background: var(--accent);
+    }
+
+    .section-heading {
+      margin-bottom: 12px;
+    }
+
+    .section-sub {
+      color: var(--text-muted);
+      font-size: 1.05rem;
+      max-width: 580px;
+      margin-bottom: 56px;
+    }
+
+    /* ── Sticky Nav ─────────────────────────────────────────────── */
+    nav {
+      position: fixed;
+      top: 0;
+      left: 0;
+      right: 0;
+      z-index: 100;
+      background: var(--bg-nav);
+      backdrop-filter: blur(16px);
+      -webkit-backdrop-filter: blur(16px);
+      border-bottom: 1px solid var(--border);
+    }
+
+    .nav-inner {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      height: 56px;
+      max-width: 1080px;
+      margin: 0 auto;
+      padding: 0 24px;
+    }
+
+    .nav-brand {
+      font-family: var(--font-mono);
+      font-size: 0.9rem;
+      font-weight: 600;
+      color: var(--heading);
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .nav-brand .dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: var(--accent);
+      flex-shrink: 0;
+    }
+
+    .nav-links {
+      display: flex;
+      align-items: center;
+      gap: 4px;
+      list-style: none;
+    }
+
+    .nav-links a {
+      color: var(--text-muted);
+      font-size: 0.85rem;
+      padding: 6px 12px;
+      border-radius: var(--radius);
+      transition: color 0.15s, background 0.15s;
+    }
+
+    .nav-links a:hover {
+      color: var(--text);
+      background: rgba(255, 255, 255, 0.05);
+      opacity: 1;
+    }
+
+    .nav-github {
+      font-size: 0.8rem;
+      font-weight: 500;
+      padding: 6px 14px;
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      color: var(--text-muted) !important;
+      transition: border-color 0.15s, color 0.15s !important;
+    }
+
+    .nav-github:hover {
+      border-color: var(--accent) !important;
+      color: var(--accent) !important;
+      background: transparent !important;
+    }
+
+    .nav-hamburger {
+      display: none;
+      flex-direction: column;
+      gap: 5px;
+      cursor: pointer;
+      padding: 4px;
+      background: none;
+      border: none;
+    }
+
+    .nav-hamburger span {
+      display: block;
+      width: 22px;
+      height: 2px;
+      background: var(--text-muted);
+      border-radius: 2px;
+      transition: background 0.15s;
+    }
+
+    .nav-hamburger:hover span { background: var(--text); }
+
+    /* ── Hero ───────────────────────────────────────────────────── */
+    #hero {
+      padding-top: 160px;
+      padding-bottom: 96px;
+      position: relative;
+      overflow: hidden;
+    }
+
+    .hero-glow {
+      position: absolute;
+      top: -120px;
+      left: 50%;
+      transform: translateX(-50%);
+      width: 800px;
+      height: 600px;
+      background: radial-gradient(ellipse at center, rgba(255, 107, 74, 0.07) 0%, transparent 70%);
+      pointer-events: none;
+    }
+
+    .hero-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 0.78rem;
+      font-weight: 500;
+      padding: 5px 12px;
+      border-radius: 20px;
+      border: 1px solid var(--border-accent);
+      background: var(--accent-dim);
+      color: var(--accent);
+      margin-bottom: 32px;
+      letter-spacing: 0.04em;
+    }
+
+    .hero-badge .badge-dot {
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: var(--accent);
+      animation: pulse 2s ease-in-out infinite;
+    }
+
+    @keyframes pulse {
+      0%, 100% { opacity: 1; transform: scale(1); }
+      50%       { opacity: 0.5; transform: scale(0.85); }
+    }
+
+    .hero-title {
+      margin-bottom: 24px;
+    }
+
+    .hero-title .accent { color: var(--accent); }
+
+    .hero-tagline {
+      font-size: clamp(1rem, 2vw, 1.2rem);
+      color: var(--text-muted);
+      max-width: 540px;
+      margin-bottom: 48px;
+      line-height: 1.6;
+    }
+
+    .hero-cta {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 12px;
+      align-items: center;
+      margin-bottom: 64px;
+    }
+
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 11px 22px;
+      border-radius: var(--radius);
+      font-size: 0.9rem;
+      font-weight: 500;
+      cursor: pointer;
+      transition: all 0.15s;
+      border: 1px solid transparent;
+      text-decoration: none;
+    }
+
+    .btn-primary {
+      background: var(--accent);
+      color: #fff;
+    }
+
+    .btn-primary:hover {
+      background: #ff7d60;
+      opacity: 1;
+      color: #fff;
+    }
+
+    .btn-ghost {
+      background: transparent;
+      border-color: var(--border);
+      color: var(--text-muted);
+    }
+
+    .btn-ghost:hover {
+      border-color: rgba(255,255,255,0.2);
+      color: var(--text);
+      opacity: 1;
+    }
+
+    .hero-install {
+      display: inline-flex;
+      align-items: center;
+      gap: 12px;
+      background: var(--bg-code);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 12px 16px;
+      font-family: var(--font-mono);
+      font-size: 0.88rem;
+      color: var(--text-muted);
+      position: relative;
+    }
+
+    .hero-install .cmd-prefix {
+      color: var(--text-faint);
+      user-select: none;
+    }
+
+    .hero-install .cmd-text { color: var(--text); }
+
+    .hero-install .copy-btn-inline {
+      background: none;
+      border: none;
+      cursor: pointer;
+      color: var(--text-faint);
+      padding: 2px 4px;
+      border-radius: 4px;
+      font-size: 0.75rem;
+      transition: color 0.15s;
+      display: flex;
+      align-items: center;
+    }
+
+    .hero-install .copy-btn-inline:hover { color: var(--accent); }
+
+    /* ── Cards / Feature Grid ───────────────────────────────────── */
+    .feature-grid {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 1px;
+      background: var(--border);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-lg);
+      overflow: hidden;
+    }
+
+    .feature-card {
+      background: var(--bg-card);
+      padding: 32px 28px;
+      transition: background 0.2s;
+    }
+
+    .feature-card:hover {
+      background: #1c1c1c;
+    }
+
+    .feature-icon {
+      width: 40px;
+      height: 40px;
+      background: var(--accent-dim);
+      border: 1px solid var(--border-accent);
+      border-radius: var(--radius);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      margin-bottom: 18px;
+      font-size: 18px;
+    }
+
+    .feature-card h3 {
+      margin-bottom: 10px;
+      font-size: 0.97rem;
+    }
+
+    .feature-card p {
+      font-size: 0.88rem;
+      color: var(--text-muted);
+      line-height: 1.6;
+    }
+
+    /* ── Code Blocks ────────────────────────────────────────────── */
+    .code-block {
+      position: relative;
+      background: var(--bg-code);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      overflow: hidden;
+      margin-bottom: 16px;
+    }
+
+    .code-block:last-child { margin-bottom: 0; }
+
+    .code-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 10px 16px;
+      border-bottom: 1px solid var(--border);
+      background: rgba(255,255,255,0.02);
+    }
+
+    .code-label {
+      font-size: 0.72rem;
+      font-weight: 500;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: var(--text-faint);
+    }
+
+    .copy-btn {
+      display: flex;
+      align-items: center;
+      gap: 5px;
+      background: none;
+      border: 1px solid var(--border);
+      border-radius: 5px;
+      color: var(--text-faint);
+      font-size: 0.72rem;
+      padding: 3px 10px;
+      cursor: pointer;
+      font-family: var(--font-sans);
+      transition: color 0.15s, border-color 0.15s;
+    }
+
+    .copy-btn:hover {
+      color: var(--accent);
+      border-color: var(--border-accent);
+    }
+
+    .copy-btn.copied {
+      color: #5cbe78;
+      border-color: rgba(92, 190, 120, 0.35);
+    }
+
+    .code-block pre {
+      padding: 20px;
+      overflow-x: auto;
+      font-family: var(--font-mono);
+      font-size: 0.85rem;
+      line-height: 1.7;
+      color: var(--text);
+    }
+
+    .code-block pre .prompt {
+      color: var(--text-faint);
+      user-select: none;
+    }
+
+    .code-block pre .cmd     { color: #e8e8e8; }
+    .code-block pre .flag    { color: #9ecff7; }
+    .code-block pre .arg     { color: #c3e3b5; }
+    .code-block pre .comment { color: var(--text-faint); font-style: italic; }
+
+    /* ── Quickstart Steps ───────────────────────────────────────── */
+    .qs-steps {
+      display: flex;
+      flex-direction: column;
+      gap: 24px;
+    }
+
+    .qs-step {
+      display: flex;
+      gap: 20px;
+    }
+
+    .qs-step-num {
+      flex-shrink: 0;
+      width: 28px;
+      height: 28px;
+      border-radius: 50%;
+      border: 1px solid var(--border-accent);
+      background: var(--accent-dim);
+      color: var(--accent);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 0.75rem;
+      font-weight: 700;
+      margin-top: 18px;
+    }
+
+    .qs-step-body {
+      flex: 1;
+    }
+
+    .qs-step-title {
+      font-size: 0.85rem;
+      color: var(--text-muted);
+      margin-bottom: 8px;
+      font-weight: 500;
+    }
+
+    /* ── Tables ─────────────────────────────────────────────────── */
+    .cmd-section {
+      margin-bottom: 48px;
+    }
+
+    .cmd-section:last-child { margin-bottom: 0; }
+
+    .cmd-section-title {
+      font-size: 0.72rem;
+      font-weight: 600;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+      color: var(--accent);
+      margin-bottom: 14px;
+      padding-bottom: 10px;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .cmd-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.875rem;
+    }
+
+    .cmd-table th {
+      text-align: left;
+      padding: 10px 16px;
+      font-size: 0.72rem;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+      color: var(--text-faint);
+      border-bottom: 1px solid var(--border);
+      font-weight: 600;
+    }
+
+    .cmd-table td {
+      padding: 12px 16px;
+      border-bottom: 1px solid rgba(255,255,255,0.04);
+      vertical-align: top;
+    }
+
+    .cmd-table tr:last-child td { border-bottom: none; }
+
+    .cmd-table td:first-child {
+      font-family: var(--font-mono);
+      font-size: 0.82rem;
+      color: var(--text);
+      white-space: nowrap;
+    }
+
+    .cmd-table td:last-child {
+      color: var(--text-muted);
+      line-height: 1.5;
+    }
+
+    .cmd-table .opt {
+      color: #9ecff7;
+      font-family: var(--font-mono);
+      font-size: 0.8rem;
+    }
+
+    .cmd-table .note {
+      display: block;
+      font-size: 0.78rem;
+      color: var(--text-faint);
+      margin-top: 3px;
+      font-family: var(--font-sans);
+    }
+
+    .table-wrap {
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      overflow: hidden;
+      margin-bottom: 16px;
+    }
+
+    /* ── Failover Diagram ───────────────────────────────────────── */
+    .failover-timeline {
+      display: flex;
+      flex-direction: column;
+      gap: 0;
+      position: relative;
+    }
+
+    .failover-timeline::before {
+      content: '';
+      position: absolute;
+      left: 19px;
+      top: 20px;
+      bottom: 20px;
+      width: 2px;
+      background: linear-gradient(to bottom, var(--border) 0%, var(--border-accent) 40%, var(--border-accent) 60%, var(--border) 100%);
+    }
+
+    .timeline-item {
+      display: flex;
+      gap: 20px;
+      padding: 0 0 32px 0;
+      position: relative;
+    }
+
+    .timeline-item:last-child { padding-bottom: 0; }
+
+    .timeline-node {
+      flex-shrink: 0;
+      width: 40px;
+      height: 40px;
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 16px;
+      position: relative;
+      z-index: 1;
+      border: 2px solid var(--border);
+      background: var(--bg-card);
+    }
+
+    .timeline-node.active {
+      border-color: var(--accent);
+      background: var(--accent-dim);
+    }
+
+    .timeline-node.warn {
+      border-color: #f0a74a;
+      background: rgba(240, 167, 74, 0.12);
+    }
+
+    .timeline-node.ok {
+      border-color: #5cbe78;
+      background: rgba(92, 190, 120, 0.12);
+    }
+
+    .timeline-body {
+      flex: 1;
+      padding-top: 8px;
+    }
+
+    .timeline-title {
+      font-size: 0.92rem;
+      font-weight: 600;
+      color: var(--heading);
+      margin-bottom: 5px;
+    }
+
+    .timeline-desc {
+      font-size: 0.85rem;
+      color: var(--text-muted);
+      line-height: 1.55;
+    }
+
+    .timeline-tag {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      font-size: 0.72rem;
+      font-weight: 500;
+      padding: 3px 10px;
+      border-radius: 12px;
+      margin-top: 8px;
+      letter-spacing: 0.03em;
+    }
+
+    .tag-work     { background: rgba(255, 107, 74, 0.12); color: var(--accent); border: 1px solid var(--border-accent); }
+    .tag-cooldown { background: rgba(240, 167, 74, 0.12); color: #f0a74a;       border: 1px solid rgba(240,167,74,0.3); }
+    .tag-healthy  { background: rgba(92, 190, 120, 0.12); color: #5cbe78;       border: 1px solid rgba(92,190,120,0.3); }
+
+    /* Chain status box */
+    .status-box {
+      margin-top: 40px;
+      background: var(--bg-code);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      overflow: hidden;
+    }
+
+    .status-box-header {
+      padding: 10px 16px;
+      border-bottom: 1px solid var(--border);
+      font-family: var(--font-mono);
+      font-size: 0.8rem;
+      color: var(--text-faint);
+      background: rgba(255,255,255,0.02);
+    }
+
+    .status-box pre {
+      padding: 16px 20px;
+      font-family: var(--font-mono);
+      font-size: 0.83rem;
+      line-height: 1.8;
+    }
+
+    .status-box .s-label { color: var(--text-faint); }
+    .status-box .s-name  { color: var(--text); }
+    .status-box .s-ok    { color: #5cbe78; }
+    .status-box .s-cool  { color: #f0a74a; }
+    .status-box .s-auth  { color: var(--accent); }
+
+    /* ── Note Box ───────────────────────────────────────────────── */
+    .note-box {
+      display: flex;
+      gap: 14px;
+      background: rgba(255, 107, 74, 0.06);
+      border: 1px solid var(--border-accent);
+      border-radius: var(--radius);
+      padding: 16px 20px;
+      margin-top: 32px;
+    }
+
+    .note-icon {
+      flex-shrink: 0;
+      font-size: 16px;
+      margin-top: 1px;
+    }
+
+    .note-box p {
+      font-size: 0.875rem;
+      color: var(--text-muted);
+      margin: 0;
+    }
+
+    .note-box strong { color: var(--text); }
+
+    /* ── Env Vars ───────────────────────────────────────────────── */
+    .env-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.875rem;
+    }
+
+    .env-table th {
+      text-align: left;
+      padding: 10px 16px;
+      font-size: 0.72rem;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+      color: var(--text-faint);
+      border-bottom: 1px solid var(--border);
+      font-weight: 600;
+    }
+
+    .env-table td {
+      padding: 14px 16px;
+      border-bottom: 1px solid rgba(255,255,255,0.04);
+      vertical-align: top;
+    }
+
+    .env-table tr:last-child td { border-bottom: none; }
+
+    .env-table td:first-child {
+      font-family: var(--font-mono);
+      font-size: 0.8rem;
+      color: #9ecff7;
+      white-space: nowrap;
+    }
+
+    .env-table td:nth-child(2) {
+      color: var(--text-muted);
+      font-size: 0.85rem;
+    }
+
+    .env-table .badge-internal {
+      display: inline-block;
+      font-size: 0.68rem;
+      padding: 1px 7px;
+      border-radius: 10px;
+      background: rgba(255,255,255,0.06);
+      border: 1px solid var(--border);
+      color: var(--text-faint);
+      font-family: var(--font-sans);
+      vertical-align: middle;
+      margin-left: 6px;
+    }
+
+    /* ── Footer ─────────────────────────────────────────────────── */
+    footer {
+      border-top: 1px solid var(--border);
+      padding: 40px 0;
+    }
+
+    .footer-inner {
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      align-items: center;
+      text-align: center;
+    }
+
+    .footer-brand {
+      font-family: var(--font-mono);
+      font-size: 0.9rem;
+      color: var(--text-muted);
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .footer-brand .dot {
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: var(--accent);
+    }
+
+    .footer-meta {
+      font-size: 0.8rem;
+      color: var(--text-faint);
+      line-height: 1.6;
+    }
+
+    .footer-meta a { color: var(--text-faint); }
+    .footer-meta a:hover { color: var(--accent); opacity: 1; }
+
+    /* ── Divider ─────────────────────────────────────────────────── */
+    .divider {
+      height: 1px;
+      background: var(--border);
+      margin: 40px 0;
+    }
+
+    /* ── Responsive ──────────────────────────────────────────────── */
+    @media (max-width: 768px) {
+      .nav-links { display: none; }
+      .nav-hamburger { display: flex; }
+      .nav-links.open {
+        display: flex;
+        flex-direction: column;
+        position: fixed;
+        top: 56px;
+        left: 0;
+        right: 0;
+        background: var(--bg);
+        border-bottom: 1px solid var(--border);
+        padding: 12px 24px;
+        gap: 4px;
+      }
+
+      .feature-grid {
+        grid-template-columns: 1fr;
+      }
+
+      .hero-cta {
+        flex-direction: column;
+        align-items: flex-start;
+      }
+
+      .section { padding: 64px 0; }
+
+      .qs-step { flex-direction: column; gap: 8px; }
+      .qs-step-num { margin-top: 0; }
+
+      .cmd-table td:first-child { white-space: normal; }
+
+      .timeline-item { gap: 14px; }
+      .failover-timeline::before { left: 15px; }
+      .timeline-node { width: 32px; height: 32px; font-size: 13px; }
+    }
+
+    @media (min-width: 769px) and (max-width: 1024px) {
+      .feature-grid { grid-template-columns: repeat(2, 1fr); }
+    }
+  </style>
+</head>
+<body>
+
+  <!-- ── Navigation ────────────────────────────────────────────── -->
+  <nav>
+    <div class="nav-inner">
+      <div class="nav-brand">
+        <span class="dot"></span>
+        claude-profiles
+      </div>
+      <ul class="nav-links" id="navLinks">
+        <li><a href="#features">Features</a></li>
+        <li><a href="#quickstart">Quickstart</a></li>
+        <li><a href="#commands">Commands</a></li>
+        <li><a href="#failover">Failover</a></li>
+        <li><a href="#env">Environment</a></li>
+        <li><a href="https://github.com/vinniai/claude-profiles" class="nav-github">GitHub ↗</a></li>
+      </ul>
+      <button class="nav-hamburger" id="hamburger" aria-label="Toggle navigation">
+        <span></span><span></span><span></span>
+      </button>
+    </div>
+  </nav>
+
+  <!-- ── Hero ──────────────────────────────────────────────────── -->
+  <section id="hero" class="section">
+    <div class="hero-glow"></div>
+    <div class="container">
+      <div class="hero-badge">
+        <span class="badge-dot"></span>
+        TypeScript CLI · MIT License
+      </div>
+
+      <h1 class="hero-title">
+        Run every Claude account<br>
+        <span class="accent">as one.</span>
+      </h1>
+
+      <p class="hero-tagline">
+        Automatic failover across multiple Claude Code OAuth accounts.
+        Continuous conversation context — even when one account hits a limit.
+      </p>
+
+      <div class="hero-cta">
+        <a href="#quickstart" class="btn btn-primary">Get started</a>
+        <a href="#commands" class="btn btn-ghost">View commands</a>
+      </div>
+
+      <div class="hero-install" id="heroInstall">
+        <span class="cmd-prefix">$</span>
+        <span class="cmd-text">npm install -g claude-profiles</span>
+        <button class="copy-btn-inline" onclick="copyText('npm install -g claude-profiles', this)" title="Copy">
+          <svg width="13" height="13" viewBox="0 0 16 16" fill="currentColor">
+            <path d="M4 2a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V2zm2-1a1 1 0 0 0-1 1v8a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1V2a1 1 0 0 0-1-1H6zM2 5a1 1 0 0 0-1 1v8a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1v-1h1v1a2 2 0 0 1-2 2H2a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h1v1H2z"/>
+          </svg>
+        </button>
+      </div>
+    </div>
+  </section>
+
+  <!-- ── Features ──────────────────────────────────────────────── -->
+  <section id="features" class="section">
+    <div class="container">
+      <span class="section-label">Features</span>
+      <h2 class="section-heading">Everything in one tool</h2>
+      <p class="section-sub">
+        Profile isolation, smart failover chains, and seamless context handoff — all from a single CLI.
+      </p>
+
+      <div class="feature-grid">
+
+        <div class="feature-card">
+          <div class="feature-icon">🔑</div>
+          <h3>Multiple OAuth accounts</h3>
+          <p>Each profile is an isolated config directory (<code>~/.claude-&lt;name&gt;/</code>) with its own OAuth login via <code>CLAUDE_CONFIG_DIR</code>, while sharing settings, hooks, and plugins back to your main <code>~/.claude/</code> via symlinks.</p>
+        </div>
+
+        <div class="feature-card">
+          <div class="feature-icon">⛓</div>
+          <h3>Fallback chains</h3>
+          <p>Define an ordered list of profiles. When the active one is unavailable, the next healthy one is tried automatically. Chains are created with a single command and can be managed live.</p>
+        </div>
+
+        <div class="feature-card">
+          <div class="feature-icon">⚡</div>
+          <h3>Smart automatic failover</h3>
+          <p>Failover triggers on exactly the right errors: usage/rate limits (429, quota exceeded), server errors (5xx, overloaded), and expired auth. A generic crash surfaces immediately — it is never silently swallowed.</p>
+        </div>
+
+        <div class="feature-card">
+          <div class="feature-icon">⏱</div>
+          <h3>Per-profile cooldowns</h3>
+          <p>Rate-limit cooldowns respect the server's reset time (or default to 1 hour). Server errors cool down for 2 minutes. Auth failures flag the profile as "needs auth" until you re-login. Health state persisted in <code>state.json</code>.</p>
+        </div>
+
+        <div class="feature-card">
+          <div class="feature-icon">🔄</div>
+          <h3>Cross-session context handoff</h3>
+          <p>Stop/SessionEnd hooks snapshot conversation context to a shared handoff directory. The next session's SessionStart hook injects that context automatically — so the new account picks up where the last left off.</p>
+        </div>
+
+        <div class="feature-card">
+          <div class="feature-icon">🖥</div>
+          <h3>Interactive TUI by default</h3>
+          <p>The full Claude Code TUI is the default run mode, not headless. A supervisor process re-launches the next healthy profile when one exits after a limit. Headless mode with auto-retry is also fully supported via <code>--headless</code>.</p>
+        </div>
+
+      </div>
+    </div>
+  </section>
+
+  <!-- ── Quickstart ─────────────────────────────────────────────── -->
+  <section id="quickstart" class="section">
+    <div class="container">
+      <span class="section-label">Quickstart</span>
+      <h2 class="section-heading">Up in under a minute</h2>
+      <p class="section-sub">Install once, create your profiles, log in, and run.</p>
+
+      <div class="qs-steps">
+
+        <div class="qs-step">
+          <div class="qs-step-num">1</div>
+          <div class="qs-step-body">
+            <p class="qs-step-title">Install and initialise</p>
+            <div class="code-block">
+              <div class="code-header">
+                <span class="code-label">shell</span>
+                <button class="copy-btn" data-copy="npm install -g claude-profiles
+claude-profiles init">Copy</button>
+              </div>
+              <pre><span class="prompt">$ </span><span class="cmd">npm install -g claude-profiles</span>
+<span class="prompt">$ </span><span class="cmd">claude-profiles init</span></pre>
+            </div>
+          </div>
+        </div>
+
+        <div class="qs-step">
+          <div class="qs-step-num">2</div>
+          <div class="qs-step-body">
+            <p class="qs-step-title">Create and authenticate profiles</p>
+            <div class="code-block">
+              <div class="code-header">
+                <span class="code-label">shell</span>
+                <button class="copy-btn" data-copy="claude-profiles profile create work
+claude-profiles profile create personal
+claude-profiles profile login work
+claude-profiles profile login personal">Copy</button>
+              </div>
+              <pre><span class="prompt">$ </span><span class="cmd">claude-profiles profile create</span> <span class="arg">work</span>
+<span class="prompt">$ </span><span class="cmd">claude-profiles profile create</span> <span class="arg">personal</span>
+<span class="prompt">$ </span><span class="cmd">claude-profiles profile login</span> <span class="arg">work</span>
+<span class="prompt">$ </span><span class="cmd">claude-profiles profile login</span> <span class="arg">personal</span></pre>
+            </div>
+          </div>
+        </div>
+
+        <div class="qs-step">
+          <div class="qs-step-num">3</div>
+          <div class="qs-step-body">
+            <p class="qs-step-title">Create a fallback chain</p>
+            <div class="code-block">
+              <div class="code-header">
+                <span class="code-label">shell</span>
+                <button class="copy-btn" data-copy="claude-profiles chain create default --profiles work,personal">Copy</button>
+              </div>
+              <pre><span class="prompt">$ </span><span class="cmd">claude-profiles chain create</span> <span class="arg">default</span> <span class="flag">--profiles</span> <span class="arg">work,personal</span></pre>
+            </div>
+          </div>
+        </div>
+
+        <div class="qs-step">
+          <div class="qs-step-num">4</div>
+          <div class="qs-step-body">
+            <p class="qs-step-title">Run with automatic failover</p>
+            <div class="code-block">
+              <div class="code-header">
+                <span class="code-label">shell</span>
+                <button class="copy-btn" data-copy='claude-default
+claude-default -- -p "summarize this repo"'>Copy</button>
+              </div>
+              <pre><span class="prompt">$ </span><span class="cmd">claude-default</span>                              <span class="comment"># interactive TUI, first healthy account</span>
+<span class="prompt">$ </span><span class="cmd">claude-default</span> <span class="flag">--</span> <span class="flag">-p</span> <span class="arg">"summarize this repo"</span>   <span class="comment"># headless with auto-failover</span></pre>
+            </div>
+          </div>
+        </div>
+
+      </div>
+    </div>
+  </section>
+
+  <!-- ── Commands ──────────────────────────────────────────────── -->
+  <section id="commands" class="section">
+    <div class="container">
+      <span class="section-label">Reference</span>
+      <h2 class="section-heading">Command reference</h2>
+      <p class="section-sub">Full list of commands, subcommands, and options.</p>
+
+      <!-- Profile commands -->
+      <div class="cmd-section">
+        <p class="cmd-section-title">Profile commands</p>
+        <div class="table-wrap">
+          <table class="cmd-table">
+            <thead>
+              <tr>
+                <th>Command</th>
+                <th>Options</th>
+                <th>Description</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>profile create &lt;name&gt;</td>
+                <td>
+                  <span class="opt">-y, --yes</span><br>
+                  <span class="opt">--shell &lt;file&gt;</span><br>
+                  <span class="opt">--share-claude-md / --no-share-claude-md</span><br>
+                  <span class="opt">--share-statusline / --no-share-statusline</span><br>
+                  <span class="opt">--description &lt;text&gt;</span><br>
+                  <span class="opt">--priority &lt;n&gt;</span><br>
+                  <span class="opt">--chain &lt;name&gt;</span>
+                </td>
+                <td>
+                  Create a new isolated profile directory under <code>~/.claude-&lt;name&gt;/</code> with shared symlinks back to <code>~/.claude/</code>.
+                  <span class="note">--priority: lower number = tried first in a chain</span>
+                </td>
+              </tr>
+              <tr>
+                <td>profile login &lt;name&gt;</td>
+                <td>—</td>
+                <td>Authenticate the OAuth account for this profile.</td>
+              </tr>
+              <tr>
+                <td>profile list</td>
+                <td>—</td>
+                <td>List all configured profiles.</td>
+              </tr>
+              <tr>
+                <td>profile delete &lt;name&gt;</td>
+                <td>—</td>
+                <td>Remove a profile and its config directory.</td>
+              </tr>
+              <tr>
+                <td>profile refresh &lt;name&gt;</td>
+                <td>—</td>
+                <td>Re-create symlinks for the profile (useful after updating shared config).</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- Chain commands -->
+      <div class="cmd-section">
+        <p class="cmd-section-title">Chain commands</p>
+        <div class="table-wrap">
+          <table class="cmd-table">
+            <thead>
+              <tr>
+                <th>Command</th>
+                <th>Options</th>
+                <th>Description</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>chain create &lt;name&gt;</td>
+                <td>
+                  <span class="opt">--profiles &lt;a,b,c&gt;</span><br>
+                  <span class="opt">--shell &lt;file&gt;</span><br>
+                  <span class="opt">--no-alias</span>
+                </td>
+                <td>
+                  Create a named fallback chain from an ordered list of profiles.
+                  <span class="note">By default, creates a shell alias (e.g. claude-default) for the chain.</span>
+                </td>
+              </tr>
+              <tr>
+                <td>chain list</td>
+                <td>—</td>
+                <td>List all chains and their member profiles.</td>
+              </tr>
+              <tr>
+                <td>chain add &lt;name&gt; &lt;profile&gt;</td>
+                <td>—</td>
+                <td>Append a profile to an existing chain.</td>
+              </tr>
+              <tr>
+                <td>chain remove &lt;name&gt; &lt;profile&gt;</td>
+                <td>—</td>
+                <td>Remove a profile from a chain.</td>
+              </tr>
+              <tr>
+                <td>chain delete &lt;name&gt;</td>
+                <td>—</td>
+                <td>Delete a chain entirely (profiles are not deleted).</td>
+              </tr>
+              <tr>
+                <td>chain status</td>
+                <td>—</td>
+                <td>Show each profile's current state: healthy, cooling down (with time remaining), or needs auth.</td>
+              </tr>
+              <tr>
+                <td>chain reset [profile]</td>
+                <td>—</td>
+                <td>Clear cooldowns and needs-auth flags. Omit profile to reset all.</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- Run command -->
+      <div class="cmd-section">
+        <p class="cmd-section-title">Run command</p>
+        <div class="table-wrap">
+          <table class="cmd-table">
+            <thead>
+              <tr>
+                <th>Command</th>
+                <th>Options</th>
+                <th>Description</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>run [options] -- &lt;claude args&gt;</td>
+                <td>
+                  <span class="opt">-c, --chain &lt;name&gt;</span><br>
+                  <span class="opt">-p, --profile &lt;name&gt;</span><br>
+                  <span class="opt">--interactive</span><br>
+                  <span class="opt">--headless</span><br>
+                  <span class="opt">--new</span>
+                </td>
+                <td>
+                  Run Claude via a chain or a single profile. Everything after <code>--</code> is forwarded to the <code>claude</code> binary.
+                  <span class="note">Mode auto-detect: if <code>-p</code> / <code>--print</code> appears in claude args, runs headless. Otherwise interactive (TUI) is the default.</span>
+                  <span class="note">--new: start a fresh continuity thread, ignoring any previous handoff context.</span>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- Handoff commands -->
+      <div class="cmd-section">
+        <p class="cmd-section-title">Handoff (context continuity)</p>
+        <div class="table-wrap">
+          <table class="cmd-table">
+            <thead>
+              <tr>
+                <th>Command</th>
+                <th>Description</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>handoff status</td>
+                <td>Show the current handoff context state for all chains.</td>
+              </tr>
+              <tr>
+                <td>handoff enable</td>
+                <td>Install continuity hooks into <code>~/.claude/settings.json</code> (Stop/SessionEnd + SessionStart hooks).</td>
+              </tr>
+              <tr>
+                <td>handoff disable</td>
+                <td>Remove continuity hooks from <code>~/.claude/settings.json</code>.</td>
+              </tr>
+              <tr>
+                <td>handoff clear [chain]</td>
+                <td>Discard saved handoff context. Optionally scoped to a single chain.</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- Sync / Init -->
+      <div class="cmd-section">
+        <p class="cmd-section-title">Sync (Git-based) &amp; Init</p>
+        <div class="table-wrap">
+          <table class="cmd-table">
+            <thead>
+              <tr>
+                <th>Command</th>
+                <th>Description</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>init</td>
+                <td>Initialise claude-profiles in the current environment. Options: <span class="opt">--sync --url &lt;repo&gt;</span>, <span class="opt">--no-sync</span>.</td>
+              </tr>
+              <tr>
+                <td>sync setup</td>
+                <td>Connect a Git remote for config synchronisation (optional feature).</td>
+              </tr>
+              <tr>
+                <td>sync push</td>
+                <td>Push local config to the remote Git repository.</td>
+              </tr>
+              <tr>
+                <td>sync pull</td>
+                <td>Pull config from the remote Git repository.</td>
+              </tr>
+              <tr>
+                <td>sync status</td>
+                <td>Show sync state (ahead, behind, diverged) relative to the remote.</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+    </div>
+  </section>
+
+  <!-- ── Failover ───────────────────────────────────────────────── -->
+  <section id="failover" class="section">
+    <div class="container">
+      <span class="section-label">How it works</span>
+      <h2 class="section-heading">Failover walkthrough</h2>
+      <p class="section-sub">
+        When an account hits a limit, the next healthy profile takes over — with the conversation context already loaded.
+      </p>
+
+      <div class="failover-timeline">
+
+        <div class="timeline-item">
+          <div class="timeline-node active">🚀</div>
+          <div class="timeline-body">
+            <p class="timeline-title">Session starts on <em>work</em> account</p>
+            <p class="timeline-desc"><code>claude-default</code> launches the Claude TUI using the first healthy profile in the chain — <em>work</em>. Normal conversation proceeds.</p>
+            <span class="timeline-tag tag-work">work · active</span>
+          </div>
+        </div>
+
+        <div class="timeline-item">
+          <div class="timeline-node warn">⚠️</div>
+          <div class="timeline-body">
+            <p class="timeline-title"><em>work</em> hits its usage limit</p>
+            <p class="timeline-desc">Claude returns a usage-limit error (HTTP 429 or "usage limit reached"). This is a recognised failover trigger. A generic crash would surface immediately and would not trigger failover.</p>
+            <span class="timeline-tag tag-cooldown">429 · usage limit reached</span>
+          </div>
+        </div>
+
+        <div class="timeline-item">
+          <div class="timeline-node warn">💾</div>
+          <div class="timeline-body">
+            <p class="timeline-title">Context snapshot &amp; cooldown recorded</p>
+            <p class="timeline-desc">A Stop/SessionEnd hook fires and snapshots the conversation summary to <code>~/.claude/.claude-profiles/handoff/default/current.json</code>. The <em>work</em> profile is marked cooling down for ~1 hour (or until the server-supplied reset time).</p>
+            <span class="timeline-tag tag-cooldown">work · cooling down ~1h</span>
+          </div>
+        </div>
+
+        <div class="timeline-item">
+          <div class="timeline-node ok">🔄</div>
+          <div class="timeline-body">
+            <p class="timeline-title">Supervisor relaunches with <em>personal</em></p>
+            <p class="timeline-desc">The supervisor sees <em>work</em> is on cooldown and picks the next healthy profile — <em>personal</em>. A new Claude TUI session is started under that account.</p>
+            <span class="timeline-tag tag-healthy">personal · healthy</span>
+          </div>
+        </div>
+
+        <div class="timeline-item">
+          <div class="timeline-node ok">✅</div>
+          <div class="timeline-body">
+            <p class="timeline-title">Context injected — conversation continues</p>
+            <p class="timeline-desc"><em>personal</em>'s SessionStart hook reads the handoff file and injects the prior conversation summary via <code>additionalContext</code>. The new session resumes seamlessly. Continuity is only activated after a failover — a clean session ends fresh.</p>
+            <span class="timeline-tag tag-healthy">context restored · continuing</span>
+          </div>
+        </div>
+
+      </div>
+
+      <!-- Chain status output -->
+      <div class="status-box">
+        <div class="status-box-header">$ claude-profiles chain status</div>
+        <pre><span class="s-label">chain  </span><span class="s-name">default</span>
+<span class="s-label">  [1]  </span><span class="s-name">work      </span>  <span class="s-cool">cooling down   (47m remaining)</span>
+<span class="s-label">  [2]  </span><span class="s-name">personal  </span>  <span class="s-ok">healthy</span></pre>
+      </div>
+
+      <div class="note-box">
+        <span class="note-icon">💡</span>
+        <p>
+          <strong>Interactive failover = relaunch with context, not a transparent mid-session swap.</strong>
+          The Claude TUI is a full terminal application — it cannot be swapped while a conversation is live.
+          Failover means the supervisor closes the current session and opens a new one under the next healthy profile,
+          with the prior context already injected. Headless (<code>--headless</code>) mode can retry within the same
+          invocation.
+        </p>
+      </div>
+
+    </div>
+  </section>
+
+  <!-- ── Environment Variables ─────────────────────────────────── -->
+  <section id="env" class="section">
+    <div class="container">
+      <span class="section-label">Configuration</span>
+      <h2 class="section-heading">Environment variables</h2>
+      <p class="section-sub">
+        Variables set by the supervisor and read by hooks. Most are managed automatically.
+      </p>
+
+      <div class="table-wrap">
+        <table class="env-table">
+          <thead>
+            <tr>
+              <th>Variable</th>
+              <th>Description</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>CLAUDE_CONFIG_DIR</td>
+              <td>Points to the active profile's isolated config directory (<code>~/.claude-&lt;name&gt;/</code>). Set automatically per profile to keep OAuth credentials isolated. Can also be set manually to override.</td>
+            </tr>
+            <tr>
+              <td>CLAUDE_PROFILES_CLAUDE_BIN</td>
+              <td>Override the path to the <code>claude</code> binary. Useful if you have multiple Claude Code versions installed or a custom wrapper.</td>
+            </tr>
+            <tr>
+              <td>
+                CLAUDE_PROFILES_CHAIN
+                <span class="badge-internal">internal</span>
+              </td>
+              <td>Set by the supervisor when launching a session. Read by hooks to know which chain is active. Not intended for manual use.</td>
+            </tr>
+            <tr>
+              <td>
+                CLAUDE_PROFILES_THREAD
+                <span class="badge-internal">internal</span>
+              </td>
+              <td>Set by the supervisor to identify the current continuity thread. Read by SessionStart and Stop hooks. Not intended for manual use.</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+    </div>
+  </section>
+
+  <!-- ── Footer ────────────────────────────────────────────────── -->
+  <footer>
+    <div class="container">
+      <div class="footer-inner">
+        <div class="footer-brand">
+          <span class="dot"></span>
+          claude-profiles
+        </div>
+        <p class="footer-meta">
+          A fork of <a href="https://github.com/mveerman/jean-claude" target="_blank" rel="noopener">jean-claude</a>
+          by <a href="https://github.com/mveerman" target="_blank" rel="noopener">Mike Veerman</a>.
+          Maintained by <a href="https://github.com/vinniai" target="_blank" rel="noopener">Vinniai</a>.
+          Released under the <a href="https://opensource.org/licenses/MIT" target="_blank" rel="noopener">MIT License</a>.
+        </p>
+      </div>
+    </div>
+  </footer>
+
+  <!-- ── JavaScript ─────────────────────────────────────────────── -->
+  <script>
+    /* ── Copy to clipboard ───────────────────────────────────── */
+    function copyText(text, btn) {
+      if (!navigator.clipboard) return;
+      navigator.clipboard.writeText(text).then(function () {
+        var orig = btn.innerHTML;
+        btn.innerHTML = '<svg width="13" height="13" viewBox="0 0 16 16" fill="currentColor"><path d="M13.78 4.22a.75.75 0 0 1 0 1.06l-7.25 7.25a.75.75 0 0 1-1.06 0L2.22 9.28a.75.75 0 0 1 1.06-1.06L6 10.94l6.72-6.72a.75.75 0 0 1 1.06 0z"/></svg>';
+        setTimeout(function () { btn.innerHTML = orig; }, 2000);
+      });
+    }
+
+    /* ── Wire up copy buttons on code blocks ──────────────────── */
+    document.addEventListener('DOMContentLoaded', function () {
+      var btns = document.querySelectorAll('.copy-btn[data-copy]');
+      btns.forEach(function (btn) {
+        btn.addEventListener('click', function () {
+          var text = btn.getAttribute('data-copy');
+          if (!navigator.clipboard) return;
+          navigator.clipboard.writeText(text).then(function () {
+            var orig = btn.textContent;
+            btn.textContent = 'Copied!';
+            btn.classList.add('copied');
+            setTimeout(function () {
+              btn.textContent = orig;
+              btn.classList.remove('copied');
+            }, 2000);
+          });
+        });
+      });
+
+      /* ── Mobile nav toggle ──────────────────────────────────── */
+      var hamburger = document.getElementById('hamburger');
+      var navLinks  = document.getElementById('navLinks');
+      if (hamburger && navLinks) {
+        hamburger.addEventListener('click', function () {
+          navLinks.classList.toggle('open');
+        });
+        navLinks.querySelectorAll('a').forEach(function (link) {
+          link.addEventListener('click', function () {
+            navLinks.classList.remove('open');
+          });
+        });
+      }
+    });
+  </script>
+
+</body>
+</html>

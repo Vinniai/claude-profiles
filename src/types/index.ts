@@ -119,3 +119,34 @@ export interface ProfileRuntimeState {
 export interface RuntimeStateFile {
   profiles: Record<string, ProfileRuntimeState>;
 }
+
+/**
+ * Cross-session handoff record for a chain, persisted in the shared
+ * `<claude-profiles>/handoff/<chain>/current.json`. It lets a session that
+ * starts on one profile pick up the context of a previous session that failed
+ * over from another profile on the same chain.
+ */
+export interface HandoffRecord {
+  /** Chain this thread belongs to. */
+  chain: string;
+  /** Stable id for the conversation thread across profiles. */
+  threadId: string;
+  /** Profile name that produced the most recent snapshot. */
+  lastProfile?: string;
+  /** Claude session id of the most recent snapshot. */
+  lastSessionId?: string;
+  /** Path to the most recent transcript (for re-summarising). */
+  transcriptPath?: string;
+  /** Best-effort running summary of the conversation so far. */
+  summary?: string;
+  /** ISO timestamp of the last update. */
+  updatedAt: string;
+  /**
+   * Set when the last session ended on a failover-eligible error. The next
+   * SessionStart injects `summary` as context and clears the flag, and the
+   * interactive supervisor uses it to decide whether to relaunch.
+   */
+  pendingFailover?: boolean;
+  /** Failure kind that triggered the pending failover, if any. */
+  failoverKind?: string;
+}

@@ -283,11 +283,12 @@ export async function runWithFallback(
  */
 export function runInteractive(
   candidate: Candidate,
-  claudeArgs: string[]
+  claudeArgs: string[],
+  env: NodeJS.ProcessEnv = process.env
 ): Promise<number> {
   return new Promise((resolve, reject) => {
     const child = spawn(claudeBin(), claudeArgs, {
-      env: { ...process.env, CLAUDE_CONFIG_DIR: candidate.profile.configDir },
+      env: { ...env, CLAUDE_CONFIG_DIR: candidate.profile.configDir },
       stdio: 'inherit',
     });
 
@@ -317,6 +318,101 @@ export function runInteractive(
       resolve(code ?? 0);
     });
   });
+}
+
+export interface InteractiveFailoverOptions {
+  candidates: Candidate[];
+  claudeArgs: string[];
+  /** Chain name + thread id threaded into the child env for the hooks. */
+  chain?: string;
+  threadId?: string;
+  /** Re-check a profile's health after the child exits (defaults to state). */
+  isCooledDown?: (name: string, now: Date) => Promise<boolean>;
+  spawnInteractive?: (
+    candidate: Candidate,
+    claudeArgs: string[],
+    env: NodeJS.ProcessEnv
+  ) => Promise<number>;
+  onLaunch?: (name: string, healthy: boolean) => void;
+  onRelaunch?: (from: string, to: string) => void;
+  now?: () => Date;
+}
+
+export interface InteractiveResult {
+  /** Profile whose session the user ultimately ended in. */
+  lastProfile: string;
+  exitCode: number;
+  /** Profiles we relaunched through, in order. */
+  path: string[];
+}
+
+/** Did this profile get marked unhealthy (cooled down / needs-auth) since launch? */
+async function defaultIsCooledDown(name: string, now: Date): Promise<boolean> {
+  const state = await loadState();
+  return !isHealthy(state.profiles[name], now);
+}
+
+/**
+ * Interactive launch with supervised, boundary-level failover. We launch the
+ * first healthy candidate; a long-lived TUI can't be swapped mid-conversation,
+ * so when `claude` exits we check whether the active profile was marked
+ * cooled-down during the session (by the Stop/SessionEnd hook). If so — and a
+ * healthy candidate remains — we relaunch on it; the SessionStart hook restores
+ * context. A clean exit (profile still healthy) ends the loop.
+ */
+export async function runInteractiveWithFailover(
+  opts: InteractiveFailoverOptions
+): Promise<InteractiveResult> {
+  const {
+    candidates,
+    claudeArgs,
+    chain,
+    threadId,
+    isCooledDown = defaultIsCooledDown,
+    spawnInteractive = (candidate, args, env) =>
+      runInteractive(candidate, args, env),
+    onLaunch,
+    onRelaunch,
+    now = () => new Date(),
+  } = opts;
+
+  if (candidates.length === 0) {
+    throw new ClaudeProfilesError(
+      'No profiles available to run',
+      ErrorCode.ALL_PROFILES_EXHAUSTED,
+      `Create a profile with 'claude-profiles profile create <name>'.`
+    );
+  }
+
+  const path: string[] = [];
+  const tried = new Set<string>();
+  let current: Candidate | undefined = candidates[0];
+  let exitCode = 0;
+
+  while (current) {
+    tried.add(current.name);
+    path.push(current.name);
+    onLaunch?.(current.name, current.healthy);
+
+    const env: NodeJS.ProcessEnv = { ...process.env };
+    if (chain) env.CLAUDE_PROFILES_CHAIN = chain;
+    if (threadId) env.CLAUDE_PROFILES_THREAD = threadId;
+    env.CLAUDE_PROFILES_RUN = '1';
+
+    exitCode = await spawnInteractive(current, claudeArgs, env);
+
+    // If the active profile is still healthy, this was a normal exit — stop.
+    if (!(await isCooledDown(current.name, now()))) break;
+
+    // The profile was throttled mid-session: relaunch on the next healthy,
+    // not-yet-tried candidate (context is restored by the SessionStart hook).
+    const next = candidates.find((c) => !tried.has(c.name) && c.healthy);
+    if (!next) break;
+    onRelaunch?.(current.name, next.name);
+    current = next;
+  }
+
+  return { lastProfile: path[path.length - 1], exitCode, path };
 }
 
 /** Load config + state and produce the ordered candidate list in one step. */

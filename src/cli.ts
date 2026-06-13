@@ -10,6 +10,8 @@ import {
   syncCommand,
   runCommand,
   chainCommand,
+  handoffCommand,
+  hookCommand,
 } from './commands/index.js';
 import { ClaudeProfilesError } from './types/index.js';
 import { printLogo } from './utils/logo.js';
@@ -36,8 +38,12 @@ export function createProgram(): Command {
   program.addCommand(profileCommand);
   program.addCommand(chainCommand);
   program.addCommand(runCommand);
+  program.addCommand(handoffCommand);
   program.addCommand(initCommand);
   program.addCommand(syncCommand);
+
+  // Hidden internal dispatcher invoked by Claude Code hooks.
+  program.addCommand(hookCommand, { hidden: true });
 
   // Deprecated — kept as hidden commands with redirect messages
   program.addCommand(pullCommand);

@@ -5,8 +5,10 @@ import { loadProfiles } from '../lib/profiles.js';
 import {
   buildCandidates,
   runWithFallback,
-  runInteractive,
+  runInteractiveWithFailover,
 } from '../lib/router.js';
+import { ensureHooksInstalled } from '../lib/hooks-install.js';
+import { loadHandoff, updateHandoff, newThreadId } from '../lib/handoff.js';
 import { ClaudeProfilesError, ErrorCode } from '../types/index.js';
 
 interface RunOptions {
@@ -14,6 +16,7 @@ interface RunOptions {
   profile?: string;
   interactive?: boolean;
   headless?: boolean;
+  new?: boolean;
 }
 
 /** Headless when `-p`/`--print` is present, unless explicitly overridden. */
@@ -27,6 +30,20 @@ function detectMode(
   return isPrint ? 'headless' : 'interactive';
 }
 
+/**
+ * The chain key used for continuity/handoff. An explicit `--chain` wins; with no
+ * selection we use "default" when a default chain exists. A single `--profile`
+ * run has no chain, so continuity is disabled for it.
+ */
+async function resolveChainKey(
+  options: RunOptions
+): Promise<string | undefined> {
+  if (options.profile) return undefined;
+  if (options.chain) return options.chain;
+  const config = await loadProfiles();
+  return config.chains?.default ? 'default' : undefined;
+}
+
 export const runCommand = new Command('run')
   .description(
     'Run Claude through a profile chain, falling back on limit/auth/server errors'
@@ -35,6 +52,7 @@ export const runCommand = new Command('run')
   .option('-p, --profile <name>', 'Use a single named profile (no fallback)')
   .option('--interactive', 'Force interactive mode (launch the TUI)')
   .option('--headless', 'Force headless mode (capture + auto-retry)')
+  .option('--new', 'Start a fresh continuity thread (ignore prior context)')
   .argument('[claudeArgs...]', 'Arguments passed straight to `claude` (use -- before them)')
   .passThroughOptions()
   .allowUnknownOption()
@@ -64,15 +82,58 @@ export const runCommand = new Command('run')
     const mode = detectMode(claudeArgs, options);
 
     if (mode === 'interactive') {
-      const chosen = candidates[0];
-      if (!chosen.healthy) {
-        logger.warn(
-          `All profiles are cooling down; launching "${chosen.name}" anyway (its limit may have reset).`
-        );
+      const chainKey = await resolveChainKey(options);
+
+      // Out-of-the-box continuity: make sure the hooks are installed when a
+      // chain is in play so failover snapshots/restores context automatically.
+      let threadId: string | undefined;
+      if (chainKey) {
+        try {
+          if (await ensureHooksInstalled()) {
+            logger.dim('Installed continuity hooks in ~/.claude/settings.json.');
+          }
+        } catch {
+          // Non-fatal: continuity is best-effort, the launch still proceeds.
+        }
+
+        const prior = await loadHandoff(chainKey);
+        if (prior && !options.new) {
+          // Continue the existing thread (context restored on the next start).
+          threadId = prior.threadId;
+        } else {
+          threadId = newThreadId(chainKey);
+          // Reset any stale pending-failover so a fresh start stays fresh.
+          await updateHandoff(chainKey, {
+            threadId,
+            pendingFailover: false,
+            summary: options.new ? undefined : prior?.summary,
+          });
+        }
       }
-      logger.dim(`Launching Claude with profile "${chosen.name}"…`);
-      const code = await runInteractive(chosen, claudeArgs);
-      process.exit(code);
+
+      const result = await runInteractiveWithFailover({
+        candidates,
+        claudeArgs,
+        chain: chainKey,
+        threadId,
+        onLaunch: (name, healthy) => {
+          if (!healthy) {
+            logger.warn(
+              `All profiles are cooling down; launching "${name}" anyway (its limit may have reset).`
+            );
+          }
+          logger.dim(`Launching Claude with profile "${name}"…`);
+        },
+        onRelaunch: (from, to) => {
+          logger.warn(
+            `profile "${from}" was throttled; relaunching on ${chalk.cyan(
+              to
+            )} with restored context.`
+          );
+        },
+      });
+
+      process.exit(result.exitCode);
     }
 
     // Headless: capture + auto-retry across the chain.

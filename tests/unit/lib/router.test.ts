@@ -15,6 +15,7 @@ import {
   resolveProfileNames,
   orderCandidates,
   runWithFallback,
+  runInteractiveWithFailover,
   type Candidate,
 } from '../../../src/lib/router.js';
 import { setProfileCooldown, markNeedsAuth } from '../../../src/lib/state.js';
@@ -173,5 +174,79 @@ describe('runWithFallback', () => {
       })
     ).rejects.toMatchObject({ code: 'ALL_PROFILES_EXHAUSTED' });
     expect(spawnImpl).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe('runInteractiveWithFailover', () => {
+  it('relaunches the next healthy profile when the active one is throttled', async () => {
+    const launched: string[] = [];
+    // "a" gets throttled during its session, "b" exits clean.
+    const cooled = new Set(['a']);
+    const result = await runInteractiveWithFailover({
+      candidates: [candidate('a'), candidate('b')],
+      claudeArgs: [],
+      chain: 'default',
+      threadId: 'default-1',
+      spawnInteractive: async (c) => {
+        launched.push(c.name);
+        return 0;
+      },
+      isCooledDown: async (name) => cooled.has(name),
+      now: () => NOW,
+    });
+    expect(launched).toEqual(['a', 'b']);
+    expect(result.lastProfile).toBe('b');
+    expect(result.path).toEqual(['a', 'b']);
+  });
+
+  it('stops after a clean session (active profile still healthy)', async () => {
+    const launched: string[] = [];
+    const result = await runInteractiveWithFailover({
+      candidates: [candidate('a'), candidate('b')],
+      claudeArgs: [],
+      spawnInteractive: async (c) => {
+        launched.push(c.name);
+        return 0;
+      },
+      isCooledDown: async () => false,
+      now: () => NOW,
+    });
+    expect(launched).toEqual(['a']);
+    expect(result.lastProfile).toBe('a');
+  });
+
+  it('does not relaunch when no untried healthy candidate remains', async () => {
+    const launched: string[] = [];
+    const result = await runInteractiveWithFailover({
+      candidates: [candidate('a'), candidate('b', false)], // b already unhealthy
+      claudeArgs: [],
+      spawnInteractive: async (c) => {
+        launched.push(c.name);
+        return 7;
+      },
+      isCooledDown: async () => true, // a got throttled too
+      now: () => NOW,
+    });
+    expect(launched).toEqual(['a']);
+    expect(result.exitCode).toBe(7);
+  });
+
+  it('passes the chain + thread env into the spawned child', async () => {
+    let capturedEnv: NodeJS.ProcessEnv | undefined;
+    await runInteractiveWithFailover({
+      candidates: [candidate('a')],
+      claudeArgs: [],
+      chain: 'default',
+      threadId: 'default-9',
+      spawnInteractive: async (_c, _args, env) => {
+        capturedEnv = env;
+        return 0;
+      },
+      isCooledDown: async () => false,
+      now: () => NOW,
+    });
+    expect(capturedEnv?.CLAUDE_PROFILES_CHAIN).toBe('default');
+    expect(capturedEnv?.CLAUDE_PROFILES_THREAD).toBe('default-9');
+    expect(capturedEnv?.CLAUDE_PROFILES_RUN).toBe('1');
   });
 });
