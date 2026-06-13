@@ -6,11 +6,44 @@
 
 ## Why?
 
-You've got more than one Claude account — work and personal, or several Max subscriptions across a team. Each has its own usage limit. When one runs out mid-session, you're stuck switching logins by hand.
+You've got more than one Claude account — Alice and Bob, work and personal, or several Max subscriptions across a team. Each account has its **own** session limit (the rolling 5-hour window) and its own weekly cap. Used one at a time, you burn one account to zero while the others sit idle — then get blocked mid-task.
 
-**claude-profiles fixes that.** Each profile is an isolated Claude Code config directory with its *own* OAuth login (`CLAUDE_CONFIG_DIR`), so multiple accounts can be authenticated and used at once. Group them into an ordered **chain**, and `claude-profiles run` automatically routes to the next account when one returns a usage-limit (429), server (5xx/overloaded), or auth/expired-token error — recording a cooldown so it isn't retried until the limit resets.
+**claude-profiles pools them.** Each profile is an isolated Claude Code config directory with its *own* OAuth login (`CLAUDE_CONFIG_DIR`), so every account stays authenticated at once. Group them into a **chain** and one command treats the whole set as a single, larger budget — **balancing** new work across accounts so no one limit gets exhausted first, and **failing over** the instant an account hits a usage-limit (429), server (5xx/overloaded), or auth/expired-token error.
 
-It still does everything the original did: manage profiles, share config via symlinks, and sync across machines with Git.
+### How it balances and optimises your session limits
+
+Three accounts, three separate limits, become one pooled budget you route intelligently:
+
+```
+   alice (max-20x)      bob (max-5x)       carol (pro)
+   ████████████ 100%    ██████░░░░ 60%     ██░░░░░░ 25%      ← each account's
+        │                    │                   │             session budget left
+        └────────────────────┼───────────────────┘
+                             ▼
+                   ┌───────────────────┐
+                   │   claude-profiles  │   one command · one pooled budget
+                   └─────────┬─────────┘
+                             ▼
+        picks the right account for THIS run, by strategy:
+
+   --most-remaining → alice   (most session budget left — spread the load)
+   --balanced       → bob      (round-robin — even wear across accounts)
+   --weighted       → alice    (biggest plan does the heavy lifting)
+   default/--failover → alice  (priority order, then fall through on limit)
+```
+
+When the chosen account throttles, the run **doesn't stop** — it re-routes to the next healthy account and records a cooldown so the drained one is skipped until its limit resets:
+
+```
+  run ─▶ alice  ✗ usage limit (cooldown 5h) ─▶ bob  ✓ served
+                 │                                   │
+                 └─ context handed off ──────────────┘   same conversation,
+                                                          new account, no restart
+```
+
+The net effect: you get the **combined** session hours of every account, automatically drawing from whichever one has headroom — instead of babysitting logins. It still does everything the original did too: manage profiles, share config via symlinks, and sync across machines with Git.
+
+> 📊 See the [live showcase](docs/showcase.html), [strategy deep-dive](docs/strategic-routing.html), and [routing log & labels](docs/routing-log-and-labels.html) for the full visual walkthrough.
 
 ## Quick Start
 
@@ -24,20 +57,22 @@ npx @vinniai/claude-profiles init
 # Initialize
 claude-profiles init
 
-# Create profiles for each account (one OAuth login per profile)
-claude-profiles profile create work
-claude-profiles profile create personal
+# Create a profile per account — `create` is top-level (no nested `profile`)
+claude-profiles create alice
+claude-profiles create bob
 
-# Log each one in
-claude-profiles profile login work
-claude-profiles profile login personal
+# Log each one in (opens `claude /login` against that profile)
+claude-profiles login alice
+claude-profiles login bob
 
 # Group them into a fallback chain (in priority order)
-claude-profiles chain create default --profiles work,personal
+claude-profiles chain create default --profiles alice,bob
 
 # Run with automatic failover — installs a `claude-default` alias too
 claude-default -p "summarize this repo"
 ```
+
+> `create` and `login` are root-level shortcuts. The longer `claude-profiles profile create` / `profile login` still work, and `profile list/set/delete/refresh` live under `profile`.
 
 ### One-shot setup (copy & paste)
 
@@ -45,12 +80,12 @@ Set up two accounts and a chain in a single block — edit the names, paste, and
 
 ```bash
 claude-profiles init
-for p in work personal; do
-  claude-profiles profile create "$p" --yes
-  claude-profiles profile login "$p"     # opens claude /login for each account
+for p in alice bob; do
+  claude-profiles create "$p" --yes
+  claude-profiles login "$p"     # opens claude /login for each account
 done
-claude-profiles chain create default --profiles work,personal
-claude-default -p "say hi"                # runs through the chain with failover
+claude-profiles chain create default --profiles alice,bob
+claude-default -p "say hi"        # runs through the chain with failover
 ```
 
 > **Copy it to your clipboard to share** with a teammate setting up their own multi-account chain:
@@ -70,14 +105,14 @@ Each profile is an isolated Claude Code config directory (`~/.claude-<name>/`) w
 
 ```bash
 # Runs `claude /login` against the profile's config dir — log in, then exit.
-claude-profiles profile login work
-claude-profiles profile login personal
+claude-profiles login alice
+claude-profiles login bob
 ```
 
-`profile login` is just a convenience for:
+`login` is just a convenience for:
 
 ```bash
-CLAUDE_CONFIG_DIR=~/.claude-work claude /login
+CLAUDE_CONFIG_DIR=~/.claude-alice claude /login
 ```
 
 ### Reuse an existing logged-in session (no re-login)
@@ -85,9 +120,9 @@ CLAUDE_CONFIG_DIR=~/.claude-work claude /login
 Already logged in on your main `~/.claude`? Seed a profile with that session instead of authenticating again — copy the credentials into the new profile's config dir:
 
 ```bash
-claude-profiles profile create work --yes
-cp ~/.claude/.credentials.json ~/.claude-work/.credentials.json   # reuse the existing session
-claude-profiles chain status                                      # 'work' shows healthy, already authed
+claude-profiles create alice --yes
+cp ~/.claude/.credentials.json ~/.claude-alice/.credentials.json   # reuse the existing session
+claude-profiles chain status                                       # 'alice' shows healthy, already authed
 ```
 
 > The same trick imports any existing `~/.claude-*` account you authenticated by hand — point the `cp` at its `.credentials.json`. Everything else (settings, hooks, agents, skills) is already shared via symlinks, so only the credentials need to move.
@@ -97,8 +132,8 @@ claude-profiles chain status                                      # 'work' shows
 When an account's token expires, failover flags it `needs auth` (visible in `chain status`). Re-auth and clear the flag:
 
 ```bash
-claude-profiles profile login work     # log back in
-claude-profiles chain reset work       # clear the needs-auth flag
+claude-profiles login alice     # log back in
+claude-profiles chain reset alice       # clear the needs-auth flag
 ```
 
 ### Share the whole setup (copy to clipboard)
@@ -116,7 +151,7 @@ wl-copy < scripts/multi-account-setup.sh                       # Wayland
 They paste it into a terminal (optionally overriding the accounts) and they're done:
 
 ```bash
-PROFILES="work personal backup" CHAIN=team bash multi-account-setup.sh
+PROFILES="alice bob carol" CHAIN=team bash multi-account-setup.sh
 ```
 
 ## Multi-account fallback
@@ -126,21 +161,21 @@ PROFILES="work personal backup" CHAIN=team bash multi-account-setup.sh
 A **chain** is an ordered list of profiles tried in turn. `chain create` also installs a `claude-<chain>` shell alias that routes through the failover engine.
 
 ```bash
-# Create a chain (work tried first, then personal, then backup)
-claude-profiles chain create default --profiles work,personal,backup
+# Create a chain (alice tried first, then bob, then carol)
+claude-profiles chain create default --profiles alice,bob,carol
 
 # List chains
 claude-profiles chain list
 
 # Edit a chain
-claude-profiles chain add default another-account
-claude-profiles chain remove default backup
+claude-profiles chain add default dave
+claude-profiles chain remove default carol
 
 # Health of every profile (healthy / cooling down / needs auth)
 claude-profiles chain status
 
 # Clear cooldowns / needs-auth flags (one profile, or all)
-claude-profiles chain reset work
+claude-profiles chain reset alice
 claude-profiles chain reset
 
 # Delete a chain (and its alias)
@@ -157,7 +192,7 @@ claude-profiles run --chain default -- -p "say hi"
 claude-default -- -p "say hi"
 
 # A single profile, no fallback
-claude-profiles run --profile work -- -p "say hi"
+claude-profiles run --profile alice -- -p "say hi"
 
 # Interactive (the TUI): launches the first healthy profile in the chain
 claude-profiles run --chain default
@@ -175,12 +210,12 @@ The profile/chain name can come **first**, so the common cases read naturally. T
 leading token(s) are rewritten to the equivalent `run` invocation:
 
 ```bash
-claude-profiles atlas -- -p "hi"                 # → run --profile atlas   (one account, no fallback)
+claude-profiles alice -- -p "hi"                 # → run --profile alice   (one account, no fallback)
 claude-profiles default -- -p "hi"               # → run --chain default   (a saved chain)
-claude-profiles atlas orion -- -p "hi"           # → run --profiles atlas,orion   (ad-hoc chain, failover)
-claude-profiles atlas orion --balanced -p "hi"   # round-robin across the two, even split
-claude-profiles atlas:3 orion:1 -- -p "hi"       # weighted split 3:1 (ratio) — implies --weighted
-claude-profiles atlas=50 orion=50 -- -p "hi"     # weighted split 50/50 (percent)
+claude-profiles alice bob -- -p "hi"             # → run --profiles alice,bob   (ad-hoc chain, failover)
+claude-profiles alice bob --balanced -p "hi"     # round-robin across the two, even split
+claude-profiles alice:3 bob:1 -- -p "hi"         # weighted split 3:1 (ratio) — implies --weighted
+claude-profiles alice=50 bob=50 -- -p "hi"       # weighted split 50/50 (percent)
 ```
 
 Rules: one profile with no weight keeps single-account semantics (no fallback); two or
@@ -196,7 +231,7 @@ flags pass straight through (`--dangerously-skip-permissions`, `--model`, `-p`, 
 | **Headless** (`-p`/`--print`) | Each profile is tried in order. On a **usage-limit (429)**, **server error (5xx/overloaded)**, or **auth/expired token**, a cooldown is recorded and the next profile is tried. A *generic* crash (any other non-zero exit) is surfaced immediately — no silent reroute. If every profile is exhausted you get `ALL_PROFILES_EXHAUSTED` summarizing each failure. |
 | **Interactive** (the TUI, default) | The *first healthy* (non-cooled-down) profile in the chain is launched. A supervisor relaunches the next healthy account if `claude` exits after a limit, restoring context (see [Cross-session continuity](#cross-session-continuity-handoff)). If all are cooling down, the first is launched anyway (its limit may have reset). |
 
-Cooldowns: rate limits use the reset time from the error when available, else **1 hour**; server errors use **2 minutes**; auth failures flag the profile as *needs auth* until you re-run `profile login`. Health lives in `state.json`, kept separate from `profiles.json` so concurrent runs don't collide.
+Cooldowns: rate limits use the reset time from the error when available, else **1 hour**; server errors use **2 minutes**; auth failures flag the profile as *needs auth* until you re-run `login`. Health lives in `state.json`, kept separate from `profiles.json` so concurrent runs don't collide.
 
 > Need a custom `claude` binary (or to run the e2e test)? Set `CLAUDE_PROFILES_CLAUDE_BIN`.
 
@@ -219,7 +254,7 @@ These labels show up in three places:
 
 # 2. When you query state — `chain status` adds a `via` badge on a cooling account:
 claude-profiles chain status
-#   ■ atlas
+#   ■ alice
 #     status   cooling down — 2h10m left — usage limit reached
 #     via      ▲ auto-failover (limit)
 
@@ -257,9 +292,9 @@ claude-profiles run --chain default --balanced -- … # just this run
 relative capacity instead of you hand-tuning weights:
 
 ```bash
-claude-profiles profile set big   --plan max-20x
-claude-profiles profile set work  --plan max-5x
-claude-profiles profile set spare --plan pro
+claude-profiles profile set alice --plan max-20x
+claude-profiles profile set bob   --plan max-5x
+claude-profiles profile set carol --plan pro
 ```
 
 `plan` feeds three things automatically: the default **`weighted`** share (a `max-20x`
@@ -284,44 +319,44 @@ dailies, and two `pro` backstops. Each is its own OAuth account in its own
 
 ```bash
 # 1. Create + log in each account (own browser login per account)
-for p in atlas orion vega nova echo flux; do
-  claude-profiles profile create "$p"
-  claude-profiles profile login  "$p"     # opens that account's OAuth flow
+for p in alice bob carol dave erin frank; do
+  claude-profiles create "$p"
+  claude-profiles login  "$p"     # opens that account's OAuth flow
 done
 
 # 2. Tag each with its plan so the router knows relative capacity
-claude-profiles profile set atlas --plan max-20x   # heavy hitters
-claude-profiles profile set orion --plan max-20x
-claude-profiles profile set vega  --plan max-5x    # dailies
-claude-profiles profile set nova  --plan max-5x
-claude-profiles profile set echo  --plan pro       # backstops
-claude-profiles profile set flux  --plan pro
+claude-profiles profile set alice --plan max-20x   # heavy hitters
+claude-profiles profile set bob   --plan max-20x
+claude-profiles profile set carol --plan max-5x    # dailies
+claude-profiles profile set dave  --plan max-5x
+claude-profiles profile set erin  --plan pro       # backstops
+claude-profiles profile set frank --plan pro
 
 # 3. Build one chain over all six (installs the `claude-fleet` alias)
-claude-profiles chain create fleet --profiles atlas,orion,vega,nova,echo,flux
+claude-profiles chain create fleet --profiles alice,bob,carol,dave,erin,frank
 ```
 
 `chain status` shows the whole fleet at a glance — health, plan, and cooldowns:
 
 ```text
 claude-profiles chain status --chain fleet
-  ■ atlas   healthy   max-20x
-  ■ orion   healthy   max-20x
-  ■ vega    healthy   max-5x
-  ■ nova    cooling down — 41m left — usage limit reached   via ▲ auto-failover (limit)
-  ■ echo    healthy   pro
-  ■ flux    needs auth                                       via ▲ auto-failover (auth)
+  ■ alice   healthy   max-20x
+  ■ bob     healthy   max-20x
+  ■ carol   healthy   max-5x
+  ■ dave    cooling down — 41m left — usage limit reached   via ▲ auto-failover (limit)
+  ■ erin    healthy   pro
+  ■ frank   needs auth                                       via ▲ auto-failover (auth)
 ```
 
 Now route across all six. The same chain answers to every form:
 
 ```bash
-# Failover order (priority): atlas → orion → vega → nova → echo → flux
+# Failover order (priority): alice → bob → carol → dave → erin → frank
 claude-profiles run --chain fleet -- -p "summarize this repo"
 claude-fleet -- -p "summarize this repo"          # generated alias, identical
 
 # Spread load instead of draining the first account — capacity-aware:
-# atlas/orion (20×) take the lion's share, echo/flux (pro) the least.
+# alice/bob (20×) take the lion's share, erin/frank (pro) the least.
 claude-profiles run --chain fleet --weighted -- -p "..."
 claude-profiles run --chain fleet --balanced -- -p "..."   # even round-robin
 claude-profiles run --chain fleet --most-remaining -- -p "..."  # whoever has the most budget left
@@ -330,12 +365,12 @@ claude-profiles run --chain fleet --most-remaining -- -p "..."  # whoever has th
 claude-profiles run --chain fleet --min-session 25 -- -p "..."
 
 # Ad-hoc subset, no saved chain — just name the accounts inline:
-claude-profiles atlas orion vega -- -p "hi"        # → 3-account ad-hoc chain
-claude-profiles atlas:3 orion:2 vega:1 -- -p "hi"  # weighted 3:2:1 across three
+claude-profiles alice bob carol -- -p "hi"        # → 3-account ad-hoc chain
+claude-profiles alice:3 bob:2 carol:1 -- -p "hi"  # weighted 3:2:1 across three
 ```
 
-When `atlas` hits its limit mid-run, the router records its cooldown and rolls to
-`orion`, then `vega`, and so on — you keep working without touching the CLI. With six
+When `alice` hits its limit mid-run, the router records its cooldown and rolls to
+`bob`, then `carol`, and so on — you keep working without touching the CLI. With six
 accounts the chain effectively pools all their windows: someone is almost always
 healthy.
 
@@ -347,7 +382,7 @@ The optional **Channel** sidecar is a Claude Code MCP server that pushes account
 claude-profiles channel                   # start the channel (stdio MCP + 127.0.0.1 control face on :8799)
 
 # Deliberately move the current thread to another account mid-run:
-curl -s -XPOST localhost:8799/switch -d '{"target":"orion","reason":"draining atlas before reset"}'
+curl -s -XPOST localhost:8799/switch -d '{"target":"bob","reason":"draining alice before reset"}'
 ```
 
 The launcher picks up the requested switch when the `claude` session next exits, relaunching on the chosen account with context restored.
@@ -380,26 +415,26 @@ Profiles let you run multiple Claude Code configurations side by side — each w
 
 ```bash
 # Create a profile (interactive — prompts for sharing preferences)
-claude-profiles profile create work
+claude-profiles create alice
 
 # Create non-interactively, with metadata and chain membership
-claude-profiles profile create work --yes --shell .zshrc \
-  --description "Work Max account" --priority 1 --chain default
+claude-profiles create alice --yes --shell .zshrc \
+  --description "Alice's Max account" --priority 1 --chain default
 
 # Authenticate a profile (runs `claude /login` against its config dir)
-claude-profiles profile login work
+claude-profiles login alice
 
 # List your profiles
 claude-profiles profile list
 
 # Launch Claude Code with a single profile
-claude-work
+claude-alice
 
 # Re-create symlinks if something breaks
-claude-profiles profile refresh work
+claude-profiles profile refresh alice
 
 # Delete a profile
-claude-profiles profile delete work
+claude-profiles profile delete alice
 ```
 
 ### How profiles work
@@ -419,10 +454,10 @@ During profile creation, you're prompted whether to share `CLAUDE.md` and `statu
 
 ```bash
 # Share both
-claude-profiles profile create work --share-claude-md --share-statusline
+claude-profiles create alice --share-claude-md --share-statusline
 
 # Keep both independent
-claude-profiles profile create work --no-share-claude-md --no-share-statusline
+claude-profiles create alice --no-share-claude-md --no-share-statusline
 ```
 
 Change a setting or add a hook in your main config, and all profiles see it immediately.
@@ -458,13 +493,13 @@ claude-profiles sync status   # Check sync status
 ```bash
 # Machine 1: Initialize and push
 claude-profiles init
-claude-profiles profile create work --yes --shell .zshrc
+claude-profiles create alice --yes --shell .zshrc
 claude-profiles sync push
 
 # Machine 2: Initialize, pull, and go
 claude-profiles init --sync --url git@github.com:you/claude-config.git
 claude-profiles sync pull
-claude-work  # Profile alias is ready
+claude-alice  # Profile alias is ready
 ```
 
 ## Command Reference
@@ -473,8 +508,8 @@ claude-work  # Profile alias is ready
 |---------|-------------|
 | `claude-profiles init` | Initialize on this machine |
 | `claude-profiles init --sync --url <repo>` | Initialize with Git syncing |
-| `claude-profiles profile create <name>` | Create a new profile (`--description`, `--priority`, `--chain`) |
-| `claude-profiles profile login <name>` | Authenticate a profile's OAuth account |
+| `claude-profiles create <name>` | Create a new profile (`--description`, `--priority`, `--chain`) — also `profile create` |
+| `claude-profiles login <name>` | Authenticate a profile's OAuth account — also `profile login` |
 | `claude-profiles profile list` | List all profiles |
 | `claude-profiles profile delete <name>` | Delete a profile |
 | `claude-profiles profile refresh <name>` | Refresh profile symlinks |

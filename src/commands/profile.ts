@@ -28,7 +28,8 @@ import {
 } from '../types/index.js';
 import fs from 'fs-extra';
 
-const profileCreateCommand = new Command('create')
+function buildProfileCreate(cmdName: string): Command {
+  return new Command(cmdName)
   .description('Create a new Claude Code profile with its own config directory')
   .argument('[name]', 'Profile name (e.g., "work", "personal")')
   .option('-y, --yes', 'Skip confirmation prompts')
@@ -189,6 +190,7 @@ const profileCreateCommand = new Command('create')
       ]);
     }
   });
+}
 
 const profileListCommand = new Command('list')
   .description('List all Claude Code profiles')
@@ -198,7 +200,7 @@ const profileListCommand = new Command('list')
 
     if (names.length === 0) {
       logger.dim('No profiles configured.');
-      logger.dim('Create one with: claude-profiles profile create <name>');
+      logger.dim('Create one with: claude-profiles create <name>');
       return;
     }
 
@@ -341,7 +343,8 @@ const profileRefreshCommand = new Command('refresh')
     logger.success(`Symlinks refreshed: ${created.join(', ')}`);
   });
 
-const profileLoginCommand = new Command('login')
+function buildProfileLogin(cmdName: string): Command {
+  return new Command(cmdName)
   .description("Authenticate a profile's OAuth account (runs `claude` in its config dir)")
   .argument('[name]', 'Profile to log in')
   .action(async (nameArg?: string) => {
@@ -349,7 +352,7 @@ const profileLoginCommand = new Command('login')
     const names = Object.keys(config.profiles);
     if (names.length === 0) {
       logger.dim('No profiles configured.');
-      logger.dim('Create one with: claude-profiles profile create <name>');
+      logger.dim('Create one with: claude-profiles create <name>');
       return;
     }
 
@@ -394,6 +397,7 @@ const profileLoginCommand = new Command('login')
       child.on('close', () => resolve());
     });
   });
+}
 
 interface ProfileSetOptions {
   weight?: string;
@@ -485,9 +489,16 @@ const profileSetCommand = new Command('set')
 
 export const profileCommand = new Command('profile')
   .description('Manage Claude Code profiles for multiple accounts')
-  .addCommand(profileCreateCommand)
+  .addCommand(buildProfileCreate('create'))
   .addCommand(profileListCommand)
   .addCommand(profileSetCommand)
   .addCommand(profileDeleteCommand)
   .addCommand(profileRefreshCommand)
-  .addCommand(profileLoginCommand);
+  .addCommand(buildProfileLogin('login'));
+
+// Top-level conveniences so you can type `claude-profiles create <name>` and
+// `claude-profiles login <name>` directly — no nested `profile` needed. They are
+// the same commands, just mounted at the root (the `profile` group stays for
+// back-compat and to house list/set/delete/refresh).
+export const createCommand = buildProfileCreate('create');
+export const loginCommand = buildProfileLogin('login');
