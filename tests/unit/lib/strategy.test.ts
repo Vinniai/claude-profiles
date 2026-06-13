@@ -5,6 +5,8 @@ import {
   applyPreferenceBoost,
   applyRouting,
   resolveStrategy,
+  isWithinPreferredHours,
+  isPreferenceBoosted,
   type RoutableCandidate,
 } from '../../../src/lib/strategy.js';
 import type { UsageBudget } from '../../../src/types/index.js';
@@ -398,6 +400,90 @@ describe('applyPreferenceBoost', () => {
     const before = candidates.map(c => c.name);
     applyPreferenceBoost(candidates, NOW);
     expect(candidates.map(c => c.name)).toEqual(before);
+  });
+
+  // Local-time constructor so the hour is deterministic regardless of TZ.
+  const atLocal = (hour: number) => new Date(2026, 5, 13, hour, 0, 0);
+
+  it('boosts a candidate inside its preferHours window', () => {
+    const a = minCandidate({ name: 'a', priorityIndex: 0 });
+    const b = minCandidate({
+      name: 'b',
+      priorityIndex: 1,
+      policy: { preferHours: { start: 21, end: 1 } },
+    });
+    const result = applyPreferenceBoost([a, b], atLocal(22)); // 10pm → inside
+    expect(result.map(x => x.name)).toEqual(['b', 'a']);
+  });
+
+  it('does NOT boost a preferHours candidate outside the window', () => {
+    const a = minCandidate({ name: 'a', priorityIndex: 0 });
+    const b = minCandidate({
+      name: 'b',
+      priorityIndex: 1,
+      policy: { preferHours: { start: 21, end: 1 } },
+    });
+    const result = applyPreferenceBoost([a, b], atLocal(12)); // noon → outside
+    expect(result.map(x => x.name)).toEqual(['a', 'b']);
+  });
+});
+
+describe('isWithinPreferredHours', () => {
+  const atLocal = (hour: number) => new Date(2026, 5, 13, hour, 0, 0);
+
+  it('returns false for no window', () => {
+    expect(isWithinPreferredHours(undefined, atLocal(22))).toBe(false);
+  });
+
+  it('matches a midnight-wrapping window half-open at the end', () => {
+    const w = { start: 21, end: 1 };
+    expect(isWithinPreferredHours(w, atLocal(21))).toBe(true);
+    expect(isWithinPreferredHours(w, atLocal(0))).toBe(true);
+    expect(isWithinPreferredHours(w, atLocal(1))).toBe(false); // end exclusive
+    expect(isWithinPreferredHours(w, atLocal(20))).toBe(false);
+  });
+
+  it('matches a same-day window half-open at the end', () => {
+    const w = { start: 9, end: 17 };
+    expect(isWithinPreferredHours(w, atLocal(9))).toBe(true);
+    expect(isWithinPreferredHours(w, atLocal(16))).toBe(true);
+    expect(isWithinPreferredHours(w, atLocal(17))).toBe(false);
+  });
+
+  it('never matches a degenerate start === end window', () => {
+    expect(isWithinPreferredHours({ start: 9, end: 9 }, atLocal(9))).toBe(false);
+  });
+});
+
+describe('isPreferenceBoosted', () => {
+  const atLocal = (hour: number) => new Date(2026, 5, 13, hour, 0, 0);
+
+  it('is false with no preference rules', () => {
+    expect(isPreferenceBoosted(minCandidate(), atLocal(22))).toBe(false);
+  });
+
+  it('is true inside a preferHours window (schedule rule)', () => {
+    const c = minCandidate({ policy: { preferHours: { start: 21, end: 1 } } });
+    expect(isPreferenceBoosted(c, atLocal(22))).toBe(true);
+    expect(isPreferenceBoosted(c, atLocal(12))).toBe(false);
+  });
+
+  it('is true when the session window resets within the drain threshold', () => {
+    const soon = new Date(atLocal(12).getTime() + 5 * 60_000).toISOString();
+    const c = minCandidate({
+      usage: { session: { usedPct: 20, resetAt: soon } },
+      policy: { preferIfWindowEndsWithinMin: 30 },
+    });
+    expect(isPreferenceBoosted(c, atLocal(12))).toBe(true);
+  });
+
+  it('is false when the window reset is beyond the drain threshold', () => {
+    const later = new Date(atLocal(12).getTime() + 90 * 60_000).toISOString();
+    const c = minCandidate({
+      usage: { session: { usedPct: 20, resetAt: later } },
+      policy: { preferIfWindowEndsWithinMin: 30 },
+    });
+    expect(isPreferenceBoosted(c, atLocal(12))).toBe(false);
   });
 });
 

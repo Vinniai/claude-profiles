@@ -127,6 +127,7 @@ export function routingCategory(kind: RoutingEventKind): RoutingCategory {
     case 'limit':
     case 'auth':
     case 'server':
+    case 'policy':
       return 'auto-failover';
     case 'exhausted':
       return 'exhausted';
@@ -157,6 +158,8 @@ export function routingLabel(kind: RoutingEventKind): RoutingLabel {
       return { glyph: '▲', text: 'auto-failover (auth)' };
     case 'server':
       return { glyph: '▲', text: 'auto-failover (server)' };
+    case 'policy':
+      return { glyph: '◇', text: 'auto-switch (policy)' };
     case 'exhausted':
       return { glyph: '×', text: 'exhausted' };
     case 'launch':

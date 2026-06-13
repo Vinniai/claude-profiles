@@ -9,8 +9,10 @@
  *   - session: a short (~5 h) window with its own request budget
  *   - weekly: a seven-day aggregate budget
  *
- * The Claude CLI does not expose machine-readable usage data, so we do
- * best-effort text extraction from whatever appears in stdout/stderr.
+ * The Claude CLI exposes plan/identity (`claude auth status --json` and the
+ * `oauthAccount` block — see lib/account-info.ts) but NOT live usage-window
+ * percentages or reset times. So for the rolling budgets we still do best-effort
+ * text extraction from whatever appears in stdout/stderr / rate-limit messages.
  */
 
 import type { UsageBudget, UsageWindow } from '../types/index.js';

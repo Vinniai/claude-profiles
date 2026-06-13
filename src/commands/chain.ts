@@ -17,16 +17,11 @@ import {
   loadState,
   clearProfileState,
   clearAllState,
-  isHealthy,
-  cooldownRemainingMs,
 } from '../lib/state.js';
 import { ensureHooksInstalled } from '../lib/hooks-install.js';
+import { buildStatusRows } from '../lib/status.js';
 import { recentRouting, clearRoutingLog } from '../lib/routing-log.js';
-import {
-  printStatusDashboard,
-  printRoutingLog,
-  type StatusRow,
-} from '../lib/render.js';
+import { printStatusDashboard, printRoutingLog, paceSummaryLine } from '../lib/render.js';
 import { ClaudeProfilesError, ErrorCode } from '../types/index.js';
 
 function parseProfilesList(raw: string): string[] {
@@ -34,13 +29,6 @@ function parseProfilesList(raw: string): string[] {
     .split(',')
     .map((s) => s.trim())
     .filter(Boolean);
-}
-
-function formatRemaining(ms: number): string {
-  const mins = Math.ceil(ms / 60000);
-  if (mins < 60) return `${mins}m`;
-  const hours = Math.floor(mins / 60);
-  return `${hours}h${mins % 60}m`;
 }
 
 const chainCreateCommand = new Command('create')
@@ -136,47 +124,32 @@ const chainDeleteCommand = new Command('delete')
 
 const chainStatusCommand = new Command('status')
   .description('Show health + usage budgets (session / weekly) for all profiles')
-  .action(async () => {
+  .option(
+    '--offline',
+    "Skip the live `claude auth status` login check (don't spawn claude)"
+  )
+  .option('-c, --chain <name>', 'Chain context for cap / cutover / up-next')
+  .action(async (options: { offline?: boolean; chain?: string }) => {
     const config = await loadProfiles();
     const state = await loadState();
-    const names = Object.keys(config.profiles);
-    if (names.length === 0) {
+    if (Object.keys(config.profiles).length === 0) {
       logger.dim('No profiles configured.');
       return;
     }
-    const now = new Date();
     logger.heading('Profile health');
 
-    const rows: StatusRow[] = names.map((name) => {
-      const s = state.profiles[name];
-      const profile = config.profiles[name];
-      let status: StatusRow['status'] = 'healthy';
-      let detail: string | undefined;
-      if (s && !isHealthy(s, now)) {
-        if (s.needsAuth) {
-          status = 'auth';
-          detail = `run: claude-profiles profile login ${name}`;
-        } else {
-          status = 'cooling';
-          const remaining = cooldownRemainingMs(s, now);
-          detail = remaining
-            ? `${formatRemaining(remaining)} left${s.lastError ? ` — ${s.lastError}` : ''}`
-            : s.lastError;
-        }
-      }
-      return {
-        name,
-        status,
-        detail,
-        description: profile.description,
-        kind: status === 'healthy' ? undefined : s?.lastEventKind,
-        session: s?.usage?.session,
-        weekly: s?.usage?.weekly,
-      };
+    const rows = await buildStatusRows(config, state, {
+      offline: options.offline,
+      chain: options.chain,
     });
 
     console.log();
     printStatusDashboard(rows);
+    const pace = paceSummaryLine(rows);
+    if (pace) {
+      console.log();
+      console.log(pace);
+    }
   });
 
 const chainLogCommand = new Command('log')

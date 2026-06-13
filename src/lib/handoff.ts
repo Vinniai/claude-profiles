@@ -2,7 +2,7 @@ import fs from 'fs-extra';
 import path from 'path';
 import os from 'os';
 import { getClaudeProfilesDir } from './paths.js';
-import type { HandoffRecord } from '../types/index.js';
+import type { HandoffRecord, RoutingEventKind } from '../types/index.js';
 
 /**
  * Cross-session continuity store. Lives in a SHARED directory outside any single
@@ -71,6 +71,41 @@ export async function updateHandoff(
   };
   await saveHandoff(merged);
   return merged;
+}
+
+/** A proactive auto-switch instruction left by the Stop hook for the supervisor. */
+export interface SwitchDirective {
+  /** Account to relaunch on. */
+  to: string;
+  /** Human-readable reason, for the banner + routing log. */
+  reason?: string;
+  /** Routing-event kind (always `'policy'` today). */
+  kind?: RoutingEventKind;
+}
+
+/**
+ * Read and CLEAR a pending auto-switch directive for a chain. The directive is
+ * one-shot: consuming it removes the `pendingSwitch*` fields so the supervisor
+ * acts on it exactly once. Returns undefined when none is pending.
+ */
+export async function consumeSwitchDirective(
+  chain: string
+): Promise<SwitchDirective | undefined> {
+  const record = await loadHandoff(chain);
+  if (!record?.pendingSwitchTo) return undefined;
+  const directive: SwitchDirective = {
+    to: record.pendingSwitchTo,
+    reason: record.pendingSwitchReason,
+    kind: record.pendingSwitchKind,
+  };
+  // Setting to undefined drops the keys on write (JSON omits undefined), so a
+  // later launch won't re-apply a stale switch.
+  await updateHandoff(chain, {
+    pendingSwitchTo: undefined,
+    pendingSwitchReason: undefined,
+    pendingSwitchKind: undefined,
+  });
+  return directive;
 }
 
 export async function clearHandoff(chain: string): Promise<void> {

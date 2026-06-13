@@ -10,4 +10,7 @@ export { handoffCommand } from './handoff.js';
 export { hookCommand } from './hook.js';
 export { strategyCommand } from './strategy.js';
 export { usageCommand } from './usage.js';
+export { statuslineCommand } from './statusline.js';
+export { cutoverCommand } from './cutover.js';
+export { paceCommand } from './pace.js';
 export { channelCommand } from './channel.js';

@@ -16,6 +16,7 @@ import type {
   RoutingConfig,
   UsageBudget,
   UsageWindow,
+  HourWindow,
 } from '../types/index.js';
 
 // ──────────────────────────────────────────────────────────────────────────────
@@ -44,6 +45,23 @@ function windowEndsInMs(window: UsageWindow | undefined, now: number): number | 
   const resetMs = Date.parse(window.resetAt);
   if (Number.isNaN(resetMs)) return undefined;
   return Math.max(0, resetMs - now);
+}
+
+/**
+ * Whether `now`'s local hour falls inside a recurring time-of-day window. The
+ * window is half-open `[start:00, end:00)`; when `start > end` it wraps past
+ * midnight (e.g. 21→1 matches 21:00–00:59). A degenerate `start === end`
+ * never matches.
+ */
+export function isWithinPreferredHours(
+  hours: HourWindow | undefined,
+  now: Date,
+): boolean {
+  if (!hours) return false;
+  const { start, end } = hours;
+  if (start === end) return false;
+  const h = now.getHours();
+  return start < end ? h >= start && h < end : h >= start || h < end;
 }
 
 // ──────────────────────────────────────────────────────────────────────────────
@@ -256,9 +274,35 @@ export function applyStrategy(
 // ──────────────────────────────────────────────────────────────────────────────
 
 /**
- * Stable-move any candidate whose `policy.preferIfWindowEndsWithinMin` is set
- * AND whose session window ends within that many minutes to the FRONT of the
- * list, preserving relative order within each group.
+ * Whether a candidate is currently preference-boosted — i.e. a SOFT routing rule
+ * is actively favouring it right now. True when EITHER fires:
+ *   - `preferIfWindowEndsWithinMin` — its session window resets within N minutes
+ *     (the "drain" rule), OR
+ *   - `preferHours` — the current local hour falls inside its time-of-day window
+ *     (the "schedule" rule).
+ *
+ * Pure; takes the same `now` the ordering uses so display, ordering, and the
+ * auto-switch decision all agree on "is this account preferred at this instant".
+ */
+export function isPreferenceBoosted(
+  candidate: RoutableCandidate,
+  now: Date = new Date(),
+): boolean {
+  const threshold = candidate.policy?.preferIfWindowEndsWithinMin;
+  if (threshold != null) {
+    const endsInMs = windowEndsInMs(candidate.usage?.session, now.getTime());
+    if (endsInMs != null && endsInMs / 60_000 <= threshold) return true;
+  }
+  return isWithinPreferredHours(candidate.policy?.preferHours, now);
+}
+
+/**
+ * Stable-move preferred candidates to the FRONT of the list, preserving relative
+ * order within each group. A candidate is boosted when {@link isPreferenceBoosted}
+ * fires (the drain or schedule rule).
+ *
+ * Both are soft boosts: this only ever runs on the already-eligible pool, so the
+ * "as long as it meets our other requirements" gating falls out for free.
  *
  * Pure — input is not mutated.
  */
@@ -266,20 +310,13 @@ export function applyPreferenceBoost(
   candidates: RoutableCandidate[],
   now?: Date,
 ): RoutableCandidate[] {
-  const nowMs = (now ?? new Date()).getTime();
+  const at = now ?? new Date();
   const boosted: RoutableCandidate[] = [];
   const rest: RoutableCandidate[] = [];
 
   for (const c of candidates) {
-    const threshold = c.policy?.preferIfWindowEndsWithinMin;
-    if (threshold != null) {
-      const endsInMs = windowEndsInMs(c.usage?.session, nowMs);
-      if (endsInMs != null && endsInMs / 60_000 <= threshold) {
-        boosted.push(c);
-        continue;
-      }
-    }
-    rest.push(c);
+    if (isPreferenceBoosted(c, at)) boosted.push(c);
+    else rest.push(c);
   }
 
   return [...boosted, ...rest];

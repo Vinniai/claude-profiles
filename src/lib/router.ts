@@ -28,6 +28,12 @@ import {
   resolveStrategy,
   type RoutableCandidate,
 } from './strategy.js';
+import {
+  effectiveMinSessionRemaining,
+  resolveUpNext,
+  type UpNext,
+} from './cutover.js';
+import { consumeSwitchDirective, type SwitchDirective } from './handoff.js';
 
 /** Cooldown applied when no explicit reset time is available. */
 export const RATE_LIMIT_COOLDOWN_MS = 60 * 60 * 1000; // 1 hour
@@ -103,6 +109,83 @@ export function effectivePolicy(
     ...config.profiles[profileName]?.policy,
   };
   return Object.keys(merged).length > 0 ? merged : undefined;
+}
+
+/**
+ * Build the routable-candidate list for a chain exactly as the launcher would:
+ * cap-override-aware eligibility, cached usage from state (the active account's
+ * figures overlaid by `liveUsage` when given), plan capacity, and the resolved
+ * strategy. Shared by `upNextForChain` (status UI) and the auto-switch hook so
+ * "who's up next" and "should we switch" agree on the same inputs. Returns
+ * undefined when the chain can't be resolved or has fewer than two profiles.
+ */
+export async function routableCandidatesFor(opts: {
+  config: ProfileConfig;
+  chain?: string;
+  account?: string;
+  liveUsage?: UsageBudget;
+  now?: Date;
+}): Promise<{ candidates: RoutableCandidate[]; strategy: RoutingStrategy } | undefined> {
+  const now = opts.now ?? new Date();
+  let names: string[];
+  try {
+    names = resolveProfileNames(opts.config, opts.chain ? { chain: opts.chain } : {});
+  } catch {
+    return undefined;
+  }
+  if (names.length < 2) return undefined;
+
+  const state = await loadState();
+  const candidates: RoutableCandidate[] = names
+    .filter((n) => opts.config.profiles[n])
+    .map((name, index) => {
+      const s = state.profiles[name];
+      const profile = opts.config.profiles[name];
+      const usage =
+        name === opts.account && opts.liveUsage ? opts.liveUsage : s?.usage;
+      const base = effectivePolicy(opts.config, opts.chain, name) ?? {};
+      const minSession =
+        base.minSessionRemaining != null
+          ? effectiveMinSessionRemaining(base, s?.capOverride, now)
+          : undefined;
+      return {
+        name,
+        healthy: isHealthy(s, now),
+        priorityIndex: index,
+        weight: profile.weight,
+        capacity: planCapacity(profile.plan),
+        usage,
+        lastUsedAt: s?.lastUsedAt,
+        policy:
+          minSession != null ? { ...base, minSessionRemaining: minSession } : base,
+      };
+    });
+
+  const { strategy } = resolveStrategy(
+    opts.config.routing,
+    opts.chain ? opts.config.chainRouting?.[opts.chain] : undefined,
+  );
+  return { candidates, strategy };
+}
+
+/**
+ * Resolve who routing would move to after `account` for a chain, using the same
+ * strategy + cap-override-aware eligibility the launcher uses, against the
+ * cached usage in state. `liveUsage` overlays the current account's freshest
+ * figures (e.g. the statusline's live snapshot). Returns undefined when the
+ * chain can't be resolved or has nothing to route to.
+ */
+export async function upNextForChain(opts: {
+  config: ProfileConfig;
+  chain?: string;
+  account?: string;
+  liveUsage?: UsageBudget;
+  now?: Date;
+}): Promise<UpNext | undefined> {
+  const now = opts.now ?? new Date();
+  const built = await routableCandidatesFor(opts);
+  if (!built) return undefined;
+  return resolveUpNext(built.candidates, opts.account, built.strategy, now);
 }
 
 /**
@@ -391,6 +474,14 @@ export interface InteractiveFailoverOptions {
   /** Chain name + thread id threaded into the child env for the hooks. */
   chain?: string;
   threadId?: string;
+  /**
+   * Proactive turn-boundary auto-switching. Defaults to enabled; pass false to
+   * pin the session to its launch account (sets `CLAUDE_PROFILES_NO_AUTOSWITCH`
+   * in the child so the Stop hook won't propose a switch).
+   */
+  autoSwitch?: boolean;
+  /** Read + clear a pending auto-switch directive for the chain (defaults to handoff). */
+  consumeSwitch?: (chain: string) => Promise<SwitchDirective | undefined>;
   /** Re-check a profile's health after the child exits (defaults to state). */
   isCooledDown?: (name: string, now: Date) => Promise<boolean>;
   spawnInteractive?: (
@@ -438,6 +529,8 @@ export async function runInteractiveWithFailover(
     claudeArgs,
     chain,
     threadId,
+    autoSwitch,
+    consumeSwitch = consumeSwitchDirective,
     isCooledDown = defaultIsCooledDown,
     spawnInteractive = (candidate, args, env) =>
       runInteractive(candidate, args, env),
@@ -467,15 +560,40 @@ export async function runInteractiveWithFailover(
     const env: NodeJS.ProcessEnv = { ...process.env };
     if (chain) env.CLAUDE_PROFILES_CHAIN = chain;
     if (threadId) env.CLAUDE_PROFILES_THREAD = threadId;
+    if (autoSwitch === false) env.CLAUDE_PROFILES_NO_AUTOSWITCH = '1';
     env.CLAUDE_PROFILES_RUN = '1';
 
     exitCode = await spawnInteractive(current, claudeArgs, env);
 
-    // If the active profile is still healthy, this was a normal exit — stop.
+    // 1. Proactive auto-switch directive takes precedence over a clean exit: the
+    //    Stop hook decided a routing rule (over-cap/schedule/drain) now favours a
+    //    different account. `current` is still healthy here — the move is the
+    //    router pre-empting a limit, not an error failover — so a directive may
+    //    point at an account we already ran (e.g. ping-pong across schedule
+    //    windows), which is allowed.
+    if (chain) {
+      const directive = await consumeSwitch(chain);
+      const next: Candidate | undefined =
+        directive && directive.to !== current.name
+          ? candidates.find((c) => c.name === directive.to)
+          : undefined;
+      if (directive && next) {
+        onRelaunch?.(
+          current.name,
+          next.name,
+          directive.kind ?? 'policy',
+          directive.reason
+        );
+        current = next;
+        continue;
+      }
+    }
+
+    // 2. If the active profile is still healthy, this was a normal exit — stop.
     if (!(await isCooledDown(current.name, now()))) break;
 
-    // The profile was throttled mid-session: relaunch on the next healthy,
-    // not-yet-tried candidate (context is restored by the SessionStart hook).
+    // 3. The profile was throttled mid-session: relaunch on the next healthy,
+    //    not-yet-tried candidate (context restored by the SessionStart hook).
     const next = candidates.find((c) => !tried.has(c.name) && c.healthy);
     if (!next) break;
     // Surface *why* it was retired so the caller can label the move (a manual
@@ -560,6 +678,15 @@ export async function buildCandidates(
     .map((name, index) => {
       const s = state.profiles[name];
       const p = config.profiles[name];
+      // A live "push past the cap" override relaxes an EXISTING session cap for
+      // this account (and only this account); it never invents a cap the chain
+      // didn't configure, so an unpushed account routes exactly as before.
+      const merged = mergePolicy(effectivePolicy(config, opts.chain, name));
+      let policy = merged;
+      if (merged?.minSessionRemaining != null && s?.capOverride) {
+        const minSession = effectiveMinSessionRemaining(merged, s.capOverride, now);
+        if (minSession != null) policy = { ...merged, minSessionRemaining: minSession };
+      }
       return {
         name,
         profile: p,
@@ -568,7 +695,7 @@ export async function buildCandidates(
         lastUsedAt: s?.lastUsedAt,
         weight: opts.weights?.[name] ?? p.weight,
         capacity: planCapacity(p.plan),
-        policy: mergePolicy(effectivePolicy(config, opts.chain, name)),
+        policy,
         priorityIndex: index,
       };
     });

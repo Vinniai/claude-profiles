@@ -8,6 +8,9 @@ import {
   profileNameForConfigDir,
 } from '../lib/handoff.js';
 import { setProfileCooldown, markNeedsAuth } from '../lib/state.js';
+import { routableCandidatesFor } from '../lib/router.js';
+import { decideAutoSwitch } from '../lib/cutover.js';
+import { appendRoutingEvent, flushRoutingLog } from '../lib/routing-log.js';
 import {
   classifyOutcome,
   shouldFailover,
@@ -116,7 +119,11 @@ async function onSessionStart(input: HookInput, chain: string): Promise<void> {
 }
 
 /** Stop / SessionEnd / PreCompact: snapshot + classify for cooldown. */
-async function onSnapshot(input: HookInput, chain: string): Promise<void> {
+async function onSnapshot(
+  input: HookInput,
+  chain: string,
+  event: string
+): Promise<void> {
   const now = new Date();
   const config = await loadProfiles();
   const activeProfile = profileNameForConfigDir(
@@ -161,7 +168,91 @@ async function onSnapshot(input: HookInput, chain: string): Promise<void> {
       outcome.resetAt ?? null,
       now
     );
+    return;
   }
+
+  // No error this turn — on a Stop boundary, consider a PROACTIVE auto-switch.
+  if (event === 'Stop' && activeProfile) {
+    await maybeAutoSwitch(chain, activeProfile, summary, now);
+  }
+}
+
+/**
+ * Proactive turn-boundary auto-switch. When a routing rule (over-cap / schedule
+ * window / drain) now favours a different account, stage a switch directive for
+ * the interactive supervisor and end this turn's processing with `continue:false`
+ * so `claude` exits and the supervisor relaunches on the chosen account (the
+ * SessionStart hook then restores context). Degrades safely: if `continue:false`
+ * doesn't force an exit, the staged directive simply applies at the next natural
+ * exit. Best-effort and side-effect-light — any failure leaves the turn alone.
+ */
+async function maybeAutoSwitch(
+  chain: string,
+  activeProfile: string,
+  summary: string,
+  now: Date
+): Promise<void> {
+  // Opt-out: the launcher sets this when run with --no-auto-switch, and the
+  // config can disable it globally/per-chain.
+  if (process.env.CLAUDE_PROFILES_NO_AUTOSWITCH === '1') return;
+  const config = await loadProfiles();
+  const chainAuto = config.chainRouting?.[chain]?.autoSwitch;
+  const globalAuto = config.routing?.autoSwitch;
+  if (chainAuto === false || (chainAuto == null && globalAuto === false)) return;
+
+  // Idempotent: never stack a second directive on top of a pending one.
+  const existing = await loadHandoff(chain);
+  if (existing?.pendingSwitchTo) return;
+
+  const built = await routableCandidatesFor({
+    config,
+    chain,
+    account: activeProfile,
+    now,
+  });
+  if (!built) return;
+
+  const decision = decideAutoSwitch({
+    candidates: built.candidates,
+    current: activeProfile,
+    strategy: built.strategy,
+    now,
+  });
+  if (!decision || decision.to === activeProfile) return;
+
+  // Stage the directive + restore-context flag, then nudge `claude` to exit so
+  // the supervisor relaunches on the chosen account.
+  await updateHandoff(
+    chain,
+    {
+      pendingSwitchTo: decision.to,
+      pendingSwitchReason: decision.reason,
+      pendingSwitchKind: decision.kind,
+      // Reuse the failover path so SessionStart re-injects the running summary
+      // on the account we switch to.
+      pendingFailover: true,
+      failoverKind: decision.kind,
+      summary: summary || existing?.summary || undefined,
+    },
+    now
+  );
+
+  await appendRoutingEvent({
+    kind: decision.kind,
+    from: activeProfile,
+    to: decision.to,
+    chain,
+    mode: 'interactive',
+    reason: decision.reason,
+  });
+  await flushRoutingLog();
+
+  process.stdout.write(
+    JSON.stringify({
+      continue: false,
+      stopReason: `↪ switching to "${decision.to}" — ${decision.reason}. Restoring context there…`,
+    })
+  );
 }
 
 export const hookCommand = new Command('_hook')
@@ -181,7 +272,7 @@ export const hookCommand = new Command('_hook')
         event === 'SessionEnd' ||
         event === 'PreCompact'
       ) {
-        await onSnapshot(input, chain);
+        await onSnapshot(input, chain, event);
       }
     } catch {
       // Never let a hook failure surface into the host CLI.

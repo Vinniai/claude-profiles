@@ -37,6 +37,7 @@ interface RunOptions {
   mostRemaining?: boolean;
   minSession?: string;
   minWeekly?: string;
+  autoSwitch?: boolean;
 }
 
 /** Resolve the one-shot strategy from the shorthand flags (or `--strategy`). */
@@ -148,6 +149,7 @@ export const runCommand = new Command('run')
   .option('--most-remaining', 'Shorthand for --strategy most-remaining')
   .option('--min-session <pct>', 'One-shot: require ≥ this % session budget left')
   .option('--min-weekly <pct>', 'One-shot: require ≥ this % weekly budget left')
+  .option('--no-auto-switch', 'Pin the session to its launch account (no proactive turn-boundary switching)')
   .argument('[claudeArgs...]', 'Arguments passed straight to `claude` (use -- before them)')
   .passThroughOptions()
   .allowUnknownOption()
@@ -247,6 +249,7 @@ export const runCommand = new Command('run')
         claudeArgs,
         chain: chainKey,
         threadId,
+        autoSwitch: options.autoSwitch,
         onLaunch: (name, healthy) => {
           if (!healthy) {
             logger.warn(

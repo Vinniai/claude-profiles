@@ -185,7 +185,9 @@ else
 fi
 
 # --- Test 4: chain status shows "a" cooling down ----------------------------
-STATUS="$(node "$CLI" chain status 2>&1)"
+# --offline: cooldown reporting only; skip the live login probe (mock claude
+# emits result-JSON, not auth-JSON, and counts every invocation).
+STATUS="$(node "$CLI" chain status --offline 2>&1)"
 if echo "$STATUS" | grep -qi "cooling down"; then
   pass "chain status reports a profile cooling down"
 else

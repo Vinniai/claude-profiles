@@ -279,4 +279,69 @@ describe('runInteractiveWithFailover', () => {
     expect(capturedEnv?.CLAUDE_PROFILES_THREAD).toBe('default-9');
     expect(capturedEnv?.CLAUDE_PROFILES_RUN).toBe('1');
   });
+
+  it('follows a proactive switch directive even when the current profile is healthy', async () => {
+    const launched: string[] = [];
+    const moves: Array<[string, string]> = [];
+    // One directive: after "a"'s clean turn, switch to "b".
+    let pending: { to: string } | undefined = { to: 'b' };
+    const result = await runInteractiveWithFailover({
+      candidates: [candidate('a'), candidate('b')],
+      claudeArgs: [],
+      chain: 'default',
+      spawnInteractive: async (c) => {
+        launched.push(c.name);
+        return 0;
+      },
+      consumeSwitch: async () => {
+        const d = pending;
+        pending = undefined; // one-shot
+        return d;
+      },
+      onRelaunch: (from, to) => moves.push([from, to]),
+      isCooledDown: async () => false, // a never throttled — proactive move
+      now: () => NOW,
+    });
+    expect(launched).toEqual(['a', 'b']);
+    expect(result.lastProfile).toBe('b');
+    expect(moves).toEqual([['a', 'b']]);
+  });
+
+  it('allows a directive to revisit an already-run account (schedule ping-pong)', async () => {
+    const launched: string[] = [];
+    // a → b → a, then stop. Proves the tried-set does not block directive switches.
+    const seq: Array<{ to: string } | undefined> = [{ to: 'b' }, { to: 'a' }, undefined];
+    let i = 0;
+    await runInteractiveWithFailover({
+      candidates: [candidate('a'), candidate('b')],
+      claudeArgs: [],
+      chain: 'default',
+      spawnInteractive: async (c) => {
+        launched.push(c.name);
+        return 0;
+      },
+      consumeSwitch: async () => seq[i++],
+      isCooledDown: async () => false,
+      now: () => NOW,
+    });
+    expect(launched).toEqual(['a', 'b', 'a']);
+  });
+
+  it('sets CLAUDE_PROFILES_NO_AUTOSWITCH when auto-switch is disabled', async () => {
+    let capturedEnv: NodeJS.ProcessEnv | undefined;
+    await runInteractiveWithFailover({
+      candidates: [candidate('a')],
+      claudeArgs: [],
+      chain: 'default',
+      autoSwitch: false,
+      spawnInteractive: async (_c, _args, env) => {
+        capturedEnv = env;
+        return 0;
+      },
+      consumeSwitch: async () => undefined,
+      isCooledDown: async () => false,
+      now: () => NOW,
+    });
+    expect(capturedEnv?.CLAUDE_PROFILES_NO_AUTOSWITCH).toBe('1');
+  });
 });
