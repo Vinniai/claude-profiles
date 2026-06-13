@@ -10,12 +10,12 @@
 #   Wayland: wl-copy  < scripts/multi-account-setup.sh
 #
 # Override the accounts and chain name with env vars:
-#   PROFILES="work personal backup" CHAIN=team ./scripts/multi-account-setup.sh
+#   PROFILES="alice bob carol" CHAIN=team ./scripts/multi-account-setup.sh
 #
 set -euo pipefail
 
-PROFILES="${PROFILES:-work personal}"   # space-separated profile names, in fallback order
-CHAIN="${CHAIN:-default}"               # the fallback chain (and its claude-<chain> alias)
+PROFILES="${PROFILES:-alice bob}"   # space-separated profile names, in fallback order
+CHAIN="${CHAIN:-default}"           # the fallback chain (and its claude-<chain> alias)
 
 command -v claude-profiles >/dev/null 2>&1 || npm install -g @vinniai/claude-profiles
 
@@ -23,8 +23,8 @@ claude-profiles init
 
 for p in $PROFILES; do
   echo "▸ creating + authenticating profile: $p"
-  claude-profiles profile create "$p" --yes
-  claude-profiles profile login "$p"    # opens `claude /login` against this account's config dir
+  claude-profiles create "$p" --yes
+  claude-profiles login "$p"    # opens `claude /login` against this account's config dir
 done
 
 # Build the chain in the order the profiles were listed.

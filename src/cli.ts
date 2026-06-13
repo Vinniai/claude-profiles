@@ -7,6 +7,8 @@ import {
   pushCommand,
   statusCommand,
   profileCommand,
+  createCommand,
+  loginCommand,
   syncCommand,
   runCommand,
   chainCommand,
@@ -173,6 +175,9 @@ export function createProgram(): Command {
     });
 
   program.addCommand(profileCommand);
+  // Root-level shortcuts: `claude-profiles create <name>` / `login <name>`.
+  program.addCommand(createCommand);
+  program.addCommand(loginCommand);
   program.addCommand(chainCommand);
   program.addCommand(runCommand);
   program.addCommand(strategyCommand);

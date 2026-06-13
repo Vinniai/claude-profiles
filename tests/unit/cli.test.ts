@@ -197,4 +197,37 @@ describe('expandProfileShortcut', () => {
       'hi',
     ]);
   });
+
+  // Regression: `create`/`login` are now top-level commands. The shortcut
+  // resolver must treat them as known subcommands and leave them alone — even
+  // if a profile happens to be named `create` or `login` (the literal command
+  // wins so you can always reach it).
+  it('leaves the top-level `create` command untouched', async () => {
+    const out = await expand(['create', 'alice']);
+    expect(out.slice(2)).toEqual(['create', 'alice']);
+    expect(mockedLoad).not.toHaveBeenCalled();
+  });
+
+  it('leaves the top-level `login` command untouched', async () => {
+    const out = await expand(['login', 'alice']);
+    expect(out.slice(2)).toEqual(['login', 'alice']);
+    expect(mockedLoad).not.toHaveBeenCalled();
+  });
+});
+
+describe('createProgram command registration', () => {
+  it('registers root-level `create` and `login` shortcuts', () => {
+    const names = createProgram().commands.map((c) => c.name());
+    expect(names).toContain('create');
+    expect(names).toContain('login');
+    // The nested group is still present for `profile create/login` back-compat.
+    expect(names).toContain('profile');
+  });
+
+  it('exposes `create`/`login` under the `profile` group as well', () => {
+    const profile = createProgram().commands.find((c) => c.name() === 'profile');
+    const sub = profile?.commands.map((c) => c.name()) ?? [];
+    expect(sub).toContain('create');
+    expect(sub).toContain('login');
+  });
 });

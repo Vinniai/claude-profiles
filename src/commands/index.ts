@@ -2,7 +2,7 @@ export { initCommand } from './init.js';
 export { pullCommand } from './pull.js';
 export { pushCommand } from './push.js';
 export { statusCommand } from './status.js';
-export { profileCommand } from './profile.js';
+export { profileCommand, createCommand, loginCommand } from './profile.js';
 export { syncCommand } from './sync.js';
 export { runCommand } from './run.js';
 export { chainCommand } from './chain.js';
