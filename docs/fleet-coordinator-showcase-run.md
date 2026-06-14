@@ -262,3 +262,38 @@ The implementation even improved on the plan in two spots: a named `KILL_GRACE_M
 Across three runs the fleet **found its own bugs → planned the fixes behind a device approval
 gate → implemented them → passed build + 548 tests with new regression coverage**. Found,
 planned, fixed, and verified — dog-fooded end to end.
+
+---
+
+# Run 4 — self-improvement loop (dogfood → fix → repeat)
+
+After the plan was closed, the fleet was pointed back at its own source three more times. Each
+cycle: `delegate_parallel` fans two reviewers (`bob`, `carol`) over a fresh set of files →
+every finding is spot-checked against source → quick-wins implemented with regression tests →
+committed. All workers ran **locally** (the operator-side `state.json` monitor showed each
+reviewer's `lastUsedAt` advancing on this machine every round). Every finding across all
+rounds was a real bug — no false positives.
+
+| Cycle | Files reviewed | Fixes shipped | Tests |
+|---|---|---|---|
+| 1 | `state.ts`, `server.ts` | temp-file random token (concurrent-writer collision); HTTP body size cap (413) + malformed-JSON 400 + handler error guard | +5 |
+| 2 | `profiles.ts`, `run.ts` | `lstat` so a broken symlink at the target is replaced; atomic shell-rc writes; empty-chain guard on `removeFromChain`; null-safe `process.exit(code ?? 1)` | +1 |
+| 3 | `router.ts`, `fleet.ts`, `usage.ts`, `paths.ts`, `chain.ts` | future-only rate-limit `resetAt`; all-deleted chain throws `NO_CHAIN`; clock-regex `(?!\d)` vs. bare epoch; migration re-checks `current` on concurrent rename; chain-delete strips alias from every detected shell rc | +3 |
+
+## Deferred items — closed with TDD
+
+The "larger" items the cycles flagged but deferred were then done **tests-first** (write the
+failing test, then implement until green):
+
+| Item | Fix |
+|---|---|
+| Auto-switch onto an unhealthy account | A proactive switch directive is honoured only when its target is healthy; otherwise it falls through to normal failover. |
+| `stream-json` (NDJSON) misclassified | `classifyOutcome` reads the final envelope of multi-object output, so a multi-line error that exits 0 is no longer treated as success. |
+| Piped stdin lost on failover | The prompt is buffered once and replayed to every candidate (the first worker would otherwise drain the live stream). |
+| `state.json` lost concurrent updates | Read-modify-write runs inside an exclusive lock file — serializes both in-process writers and the fleet's separate `claude -p` worker processes; stale-lock steal + bounded wait so it can't deadlock. |
+
+## Result
+
+**Build clean, 564 unit tests pass** (548 → **+16** across the four commits). The fleet didn't
+just fix a one-off backlog — it ran a repeatable find → fix → verify loop on itself and tightened
+the same concurrency, parsing, and failover paths it depends on to run.
