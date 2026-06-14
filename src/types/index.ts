@@ -428,6 +428,15 @@ export interface HandoffRecord {
   /** Failure kind that triggered the pending failover, if any. */
   failoverKind?: string;
   /**
+   * One-shot resume directive, set when a coordinator/session is relaunched and
+   * should continue its prior conversation. Unlike {@link pendingFailover} this is
+   * NOT an error and NOT an account switch — the same account is picking its own
+   * last session back up (e.g. after a remote-control reconnect/refresh, which the
+   * `claude` CLI cannot `--resume` in server mode). The next SessionStart injects
+   * `summary` as context and clears the flag, so only the first new session resumes.
+   */
+  pendingResume?: boolean;
+  /**
    * Proactive auto-switch directive, set by the Stop hook when a routing rule
    * (over-cap / schedule / drain) decides work should move to a different account
    * at this turn boundary. The interactive supervisor reads it after `claude`

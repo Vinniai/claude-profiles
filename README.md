@@ -533,6 +533,15 @@ Once connected, steer it like any session — e.g. type on your phone:
 > Use `delegate_parallel` to have `bob` audit `./api` for auth bugs and `carol`
 > review `./web` for a11y issues, then merge both into one prioritized list.
 
+**Auto-resume on relaunch.** A coordinator's `--name` is its continuity key. If the
+Remote Control connection drops (or you stop and re-run the command), relaunch with the
+**same `--name`** and it picks up where it left off — the previous conversation's summary
+is restored as the session's opening context. Server-mode Remote Control has no
+`--resume`/`--continue` flag of its own, so this is wired through our SessionStart hook:
+every turn snapshots the transcript to the shared handoff store keyed by name, and the
+relaunch injects it once. Pass `--fresh` to start a clean conversation under the same name
+instead. (The very first launch of a name has nothing to resume, so it always starts clean.)
+
 For a full, documentable QA protocol — multi-agent fan-out, **plan mode**, threading,
 resilience, plus an operator-side proof monitor and a scoring rubric — see
 [docs/fleet-coordinator-acceptance-test.md](docs/fleet-coordinator-acceptance-test.md).

@@ -105,16 +105,31 @@ async function recordCooldown(
   }
 }
 
-/** SessionStart: inject continuation context once, after a failover. */
+/**
+ * SessionStart: inject continuation context once. Two one-shot triggers:
+ *  - `pendingFailover`: a different account is picking up after the prior one
+ *    became unavailable.
+ *  - `pendingResume`: the same coordinator is reconnecting/relaunching and
+ *    continuing its own last conversation (server-mode remote control can't
+ *    `--resume`, so we restore context via this hook instead).
+ * Failover wins if both are set. The flag is cleared after injecting so only the
+ * first new session resumes and a later clean start does not re-inject.
+ */
 async function onSessionStart(input: HookInput, chain: string): Promise<void> {
   const record = await loadHandoff(chain);
-  if (!record || !record.pendingFailover || !record.summary) return;
+  if (!record || !record.summary) return;
 
-  // Emit the additionalContext, then clear the pending flag so a later clean
-  // start does not re-inject it.
-  const context = buildContinuationContext(record);
+  let mode: 'failover' | 'resume' | null = null;
+  if (record.pendingFailover) mode = 'failover';
+  else if (record.pendingResume) mode = 'resume';
+  if (!mode) return;
+
+  // Emit the additionalContext, then clear the consumed flag so a later clean
+  // start (or a sibling spawned session) does not re-inject it.
+  const context = buildContinuationContext(record, mode);
   await updateHandoff(chain, {
-    pendingFailover: false,
+    pendingFailover: mode === 'failover' ? false : record.pendingFailover,
+    pendingResume: mode === 'resume' ? false : record.pendingResume,
     lastSessionId: input.session_id,
   });
 

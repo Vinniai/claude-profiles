@@ -137,6 +137,24 @@ describe('handoff', () => {
       expect(ctx.toLowerCase()).toContain('continuing');
     });
 
+    it('builds a resume context (reconnect wording, not failover)', () => {
+      const ctx = buildContinuationContext(
+        {
+          chain: 'taskr',
+          threadId: 't',
+          lastProfile: 'josh',
+          summary: 'User: build the thing\nAssistant: on it',
+          updatedAt: NOW.toISOString(),
+        },
+        'resume'
+      );
+      expect(ctx).toContain('taskr');
+      expect(ctx).toContain('User: build the thing');
+      expect(ctx.toLowerCase()).toContain('resuming');
+      // Must NOT claim the account became unavailable — this is a reconnect.
+      expect(ctx.toLowerCase()).not.toContain('unavailable');
+    });
+
     it('maps a config dir back to a profile name', () => {
       const profiles = {
         josh: { configDir: '/home/me/.claude-josh' },

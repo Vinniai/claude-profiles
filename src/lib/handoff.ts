@@ -231,15 +231,36 @@ export async function summarizeTranscript(
   };
 }
 
-/** The context string injected into a fallback session's SessionStart. */
-export function buildContinuationContext(record: HandoffRecord): string {
+/**
+ * The context string injected into a session's SessionStart to continue a prior
+ * conversation. Two modes:
+ *  - `'failover'` (default): a different account is picking up because the prior
+ *    one became unavailable (limit/auth/error).
+ *  - `'resume'`: the SAME coordinator/session is reconnecting/relaunching and
+ *    continuing its own last conversation (e.g. a remote-control refresh, which
+ *    the `claude` CLI cannot `--resume` in server mode).
+ */
+export function buildContinuationContext(
+  record: HandoffRecord,
+  mode: 'failover' | 'resume' = 'failover'
+): string {
   const from = record.lastProfile ? ` (previously on profile "${record.lastProfile}")` : '';
+  const body = record.summary ?? '(no summary captured)';
+  if (mode === 'resume') {
+    return [
+      `You are resuming your previous session on the "${record.chain}" coordinator${from}.`,
+      `This is a reconnect/relaunch of the same session — the conversation below is what you were doing before it dropped.`,
+      `Pick up exactly where it left off — do not greet the user or restart. Here is the conversation so far:`,
+      '',
+      body,
+    ].join('\n');
+  }
   return [
     `You are continuing an in-progress conversation on the "${record.chain}" fallback chain${from}.`,
     `The previous account became unavailable, so this session is resuming it on a different account.`,
     `Pick up exactly where it left off — do not greet the user or restart. Here is the conversation so far:`,
     '',
-    record.summary ?? '(no summary captured)',
+    body,
   ].join('\n');
 }
 
