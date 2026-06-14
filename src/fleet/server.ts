@@ -202,7 +202,13 @@ export async function startFleetServer(
   let httpServer: http.Server | undefined;
   if (port > 0) {
     httpServer = http.createServer((reqHttp, res) => {
-      void handleHttp(reqHttp, res, concurrency);
+      handleHttp(reqHttp, res, concurrency).catch((err: unknown) => {
+        // A throw (bad body, oversize, or unexpected) must not hang the socket.
+        const status = err instanceof HttpError ? err.status : 500;
+        const message = err instanceof Error ? err.message : 'internal error';
+        if (!res.headersSent) send(res, status, { error: message });
+        else res.destroy();
+      });
     });
     await new Promise<void>((resolve) => {
       httpServer!.listen(port, '127.0.0.1', () => {
@@ -228,15 +234,36 @@ function send(res: http.ServerResponse, status: number, body: unknown): void {
   res.end(text);
 }
 
-async function readJsonBody(req: http.IncomingMessage): Promise<Record<string, unknown>> {
+/** An HTTP-face error carrying the status code to send back to the client. */
+export class HttpError extends Error {
+  constructor(
+    public readonly status: number,
+    message: string,
+  ) {
+    super(message);
+    this.name = 'HttpError';
+  }
+}
+
+/** Reject request bodies larger than this (memory-DoS guard). */
+export const MAX_BODY_BYTES = 1_000_000;
+
+export async function readJsonBody(req: http.IncomingMessage): Promise<Record<string, unknown>> {
   const chunks: Buffer[] = [];
-  for await (const c of req) chunks.push(c as Buffer);
+  let total = 0;
+  for await (const c of req) {
+    const buf = c as Buffer;
+    total += buf.length;
+    if (total > MAX_BODY_BYTES) throw new HttpError(413, 'request body too large');
+    chunks.push(buf);
+  }
   const raw = Buffer.concat(chunks).toString('utf-8').trim();
   if (!raw) return {};
   try {
     return JSON.parse(raw) as Record<string, unknown>;
   } catch {
-    return {};
+    // Distinct from a well-formed body missing fields — don't mask it as a 400 "requires …".
+    throw new HttpError(400, 'malformed JSON body');
   }
 }
 

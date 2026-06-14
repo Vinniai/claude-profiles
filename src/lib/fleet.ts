@@ -257,7 +257,14 @@ export async function applyWorkerEffects(
   }
   switch (result.kind) {
     case 'rate_limit': {
-      const until = result.outcome.resetAt ?? new Date(now.getTime() + RATE_LIMIT_COOLDOWN_MS);
+      // Only trust resetAt if it's in the future — a stale/past reset time would
+      // make an immediately-expired cooldown, treating the throttled profile as
+      // healthy again right away (mirrors the guard in router.ts).
+      const reset = result.outcome.resetAt;
+      const until =
+        reset && reset.getTime() > now.getTime()
+          ? reset
+          : new Date(now.getTime() + RATE_LIMIT_COOLDOWN_MS);
       await setProfileCooldown(result.profile, until, result.outcome.reason, now);
       break;
     }

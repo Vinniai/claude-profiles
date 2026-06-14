@@ -1,3 +1,4 @@
+import crypto from 'crypto';
 import fs from 'fs-extra';
 import path from 'path';
 import { getClaudeProfilesDir } from './paths.js';
@@ -38,9 +39,63 @@ export async function loadState(): Promise<RuntimeStateFile> {
 async function saveState(state: RuntimeStateFile): Promise<void> {
   const statePath = getStatePath();
   await fs.ensureDir(path.dirname(statePath));
-  const tmpPath = `${statePath}.${process.pid}.tmp`;
+  // Unique per writer (pid + random token) so two concurrent in-process writers
+  // can't collide on the same temp file and rename a half-written one over state.
+  const tmpPath = `${statePath}.${process.pid}.${crypto.randomBytes(6).toString('hex')}.tmp`;
   await fs.writeJson(tmpPath, state, { spaces: 2 });
   await fs.rename(tmpPath, statePath);
+}
+
+// ─── Cross-process + in-process write lock ───────────────────────────────────
+// A read-modify-write (load → mutate → save) must be atomic against *other*
+// writers, or two of them read the same snapshot and the second save clobbers
+// the first's change. An exclusive lock file serializes writers both within this
+// process (the second `wx` open EEXISTs and retries) and across the fleet's
+// separate `claude -p` worker processes.
+
+const LOCK_STALE_MS = 10_000; // steal a lock whose holder seemingly died
+const LOCK_RETRY_MS = 12; // poll interval while waiting to acquire
+const LOCK_MAX_WAIT_MS = 5_000; // give up waiting rather than hang forever
+
+function delay(ms: number): Promise<void> {
+  return new Promise((r) => setTimeout(r, ms));
+}
+
+/** Run `fn` while holding an exclusive lock on the state file. */
+async function withStateLock<T>(fn: () => Promise<T>): Promise<T> {
+  const lockPath = `${getStatePath()}.lock`;
+  await fs.ensureDir(path.dirname(lockPath));
+  const deadline = Date.now() + LOCK_MAX_WAIT_MS;
+
+  for (;;) {
+    try {
+      const fd = await fs.open(lockPath, 'wx'); // exclusive create
+      await fs.close(fd);
+      break;
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code !== 'EEXIST') throw err;
+      // Held by someone else. Steal it if it looks abandoned, else wait.
+      try {
+        const st = await fs.stat(lockPath);
+        if (Date.now() - st.mtimeMs > LOCK_STALE_MS) {
+          await fs.remove(lockPath).catch(() => {});
+          continue;
+        }
+      } catch {
+        // Lock vanished between EEXIST and stat — race to re-acquire.
+        continue;
+      }
+      // Bound the wait: proceed unlocked rather than deadlock the CLI forever.
+      if (Date.now() >= deadline) break;
+      await delay(LOCK_RETRY_MS);
+    }
+  }
+
+  try {
+    return await fn();
+  } finally {
+    await fs.remove(lockPath).catch(() => {});
+  }
 }
 
 export async function getProfileState(
@@ -58,13 +113,15 @@ async function updateProfileState(
   name: string,
   patch: Partial<ProfileRuntimeState> | null
 ): Promise<void> {
-  const state = await loadState();
-  if (patch === null) {
-    delete state.profiles[name];
-  } else {
-    state.profiles[name] = { ...state.profiles[name], ...patch };
-  }
-  await saveState(state);
+  await withStateLock(async () => {
+    const state = await loadState();
+    if (patch === null) {
+      delete state.profiles[name];
+    } else {
+      state.profiles[name] = { ...state.profiles[name], ...patch };
+    }
+    await saveState(state);
+  });
 }
 
 export async function setProfileCooldown(
@@ -110,9 +167,13 @@ export async function recordUsage(
   observed: UsageBudget
 ): Promise<void> {
   if (!observed.session && !observed.weekly) return;
-  const current = await getProfileState(name);
-  const usage = mergeBudget(current.usage, observed);
-  await updateProfileState(name, { usage });
+  // Merge inside the lock so a concurrent writer's usage isn't read-then-clobbered.
+  await withStateLock(async () => {
+    const state = await loadState();
+    const current = state.profiles[name] ?? {};
+    state.profiles[name] = { ...current, usage: mergeBudget(current.usage, observed) };
+    await saveState(state);
+  });
 }
 
 /** Overwrite a profile's stored usage budget outright (manual `usage set`). */
@@ -125,14 +186,16 @@ export async function setUsage(
 
 /** Drop a profile's stored usage budget. */
 export async function clearUsage(name: string): Promise<void> {
-  const current = await getProfileState(name);
-  if (!current.usage) return;
-  const next = { ...current };
-  delete next.usage;
-  // Replace wholesale so the `usage` key is actually removed.
-  const state = await loadState();
-  state.profiles[name] = next;
-  await saveState(state);
+  await withStateLock(async () => {
+    const state = await loadState();
+    const current = state.profiles[name];
+    if (!current?.usage) return;
+    const next = { ...current };
+    delete next.usage;
+    // Replace wholesale so the `usage` key is actually removed.
+    state.profiles[name] = next;
+    await saveState(state);
+  });
 }
 
 /** Persist a freshly-computed burn-rate estimate for a profile. */
@@ -154,13 +217,15 @@ export async function setCapOverride(
 
 /** Remove a profile's cap override, restoring the configured cap. */
 export async function clearCapOverride(name: string): Promise<void> {
-  const current = await getProfileState(name);
-  if (!current.capOverride) return;
-  const next = { ...current };
-  delete next.capOverride;
-  const state = await loadState();
-  state.profiles[name] = next;
-  await saveState(state);
+  await withStateLock(async () => {
+    const state = await loadState();
+    const current = state.profiles[name];
+    if (!current?.capOverride) return;
+    const next = { ...current };
+    delete next.capOverride;
+    state.profiles[name] = next;
+    await saveState(state);
+  });
 }
 
 /** Stamp a profile as just-used, so `round-robin` can spread load over time. */
@@ -172,7 +237,9 @@ export async function markUsed(
 }
 
 export async function clearAllState(): Promise<void> {
-  await saveState({ profiles: {} });
+  await withStateLock(async () => {
+    await saveState({ profiles: {} });
+  });
 }
 
 /**

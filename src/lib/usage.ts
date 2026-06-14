@@ -178,7 +178,10 @@ export function parseUsageFromText(text: string, now: Date = new Date()): UsageB
   }
 
   // Shape b: human clock "resets at 3:45pm" / "resets at 15:00"
-  const humanRe = /resets?\s+at\s+(\d{1,2})(?::(\d{2}))?\s*(am|pm)?/gi;
+  // The trailing (?!\d) stops it from grabbing the leading "17" of a bare epoch
+  // like "resets at 1718200000" (which epochRe skips for lacking a :/=), while
+  // still allowing colon-separated times like 15:30:00.
+  const humanRe = /resets?\s+at\s+(\d{1,2})(?::(\d{2}))?\s*(am|pm)?(?!\d)/gi;
   let hm: RegExpExecArray | null;
   humanRe.lastIndex = 0;
   while ((hm = humanRe.exec(text)) !== null) {

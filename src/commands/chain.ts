@@ -115,7 +115,10 @@ const chainDeleteCommand = new Command('delete')
   .argument('<name>', 'Chain name')
   .action(async (name: string) => {
     await deleteChain(name);
-    for (const shellFile of ['.zshrc', '.bashrc', '.bash_profile']) {
+    // Strip the alias from every shell rc we know about, not a fixed three —
+    // covers .bash_profile and whatever else detectShellConfigFiles surfaces.
+    const shellFiles = [...new Set(detectShellConfigFiles().map((f) => f.value))];
+    for (const shellFile of shellFiles) {
       const removed = await removeChainAlias(name, shellFile);
       if (removed) logger.success(`Removed alias from ~/${shellFile}`);
     }

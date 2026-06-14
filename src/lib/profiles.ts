@@ -1,3 +1,4 @@
+import crypto from 'crypto';
 import fs from 'fs-extra';
 import path from 'path';
 import os from 'os';
@@ -141,9 +142,14 @@ export async function createSymlinks(
       continue;
     }
 
-    // Remove existing target if any (shouldn't happen on create, but safe)
-    if (await fs.pathExists(targetPath)) {
+    // Remove any existing entry — including a dangling symlink, which
+    // fs.pathExists() misses (it follows links), so fs.symlink below would
+    // otherwise throw EEXIST and break refresh/recreate.
+    try {
+      await fs.lstat(targetPath);
       await fs.remove(targetPath);
+    } catch {
+      // Nothing at targetPath — proceed to create the symlink.
     }
 
     await fs.symlink(sourcePath, targetPath);
@@ -228,6 +234,16 @@ function aliasRegex(kind: 'profile' | 'chain', name: string): RegExp {
   );
 }
 
+/**
+ * Write a file via tmp-then-rename so a mid-write crash can't corrupt the
+ * user's shell rc (mirrors saveProfiles). Token-per-write avoids tmp collisions.
+ */
+async function atomicWriteFile(filePath: string, content: string): Promise<void> {
+  const tmp = `${filePath}.${process.pid}.${crypto.randomBytes(6).toString('hex')}.tmp`;
+  await fs.writeFile(tmp, content);
+  await fs.rename(tmp, filePath);
+}
+
 function markerMatches(
   content: string,
   kind: 'profile' | 'chain',
@@ -250,7 +266,7 @@ async function installAliasBlock(
     const content = await fs.readFile(rcPath, 'utf-8');
     if (markerMatches(content, kind, name)) {
       const updated = content.replace(aliasRegex(kind, name), block);
-      await fs.writeFile(rcPath, updated);
+      await atomicWriteFile(rcPath, updated);
       return;
     }
   }
@@ -270,7 +286,7 @@ async function removeAliasBlock(
   if (!markerMatches(content, kind, name)) return false;
 
   const updated = content.replace(aliasRegex(kind, name), '\n');
-  await fs.writeFile(rcPath, updated);
+  await atomicWriteFile(rcPath, updated);
   return true;
 }
 
@@ -416,6 +432,13 @@ export async function removeFromChain(
     );
   }
   const updated = chain.filter((n) => n !== profileName);
+  if (updated.length === 0) {
+    throw new ClaudeProfilesError(
+      `Removing "${profileName}" would leave chain "${name}" empty`,
+      ErrorCode.NO_CHAIN,
+      `A chain needs at least one profile. Run 'claude-profiles chain delete ${name}' to remove it instead.`
+    );
+  }
   config.chains![name] = updated;
   await saveProfiles(config);
   return updated;

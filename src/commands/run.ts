@@ -91,6 +91,21 @@ function buildPolicyOverride(options: RunOptions): RoutingPolicy | undefined {
   return Object.keys(policy).length > 0 ? policy : undefined;
 }
 
+/**
+ * Buffer a piped prompt from stdin once, so the same input can be replayed to
+ * every account on failover (a live stdin stream is consumed by the first
+ * worker, leaving the next with nothing). Returns null on a TTY (interactive —
+ * nothing piped) so the child inherits the terminal instead.
+ */
+async function readPipedStdin(): Promise<Buffer | null> {
+  if (process.stdin.isTTY) return null;
+  const chunks: Buffer[] = [];
+  for await (const c of process.stdin) {
+    chunks.push(Buffer.isBuffer(c) ? c : Buffer.from(c as string));
+  }
+  return chunks.length > 0 ? Buffer.concat(chunks) : null;
+}
+
 /** Headless when `-p`/`--print` is present, unless explicitly overridden. */
 function detectMode(
   claudeArgs: string[],
@@ -297,14 +312,17 @@ export const runCommand = new Command('run')
       });
 
       await flushRoutingLog();
-      process.exit(result.exitCode);
+      process.exit(result.exitCode ?? 1);
     }
 
-    // Headless: capture + auto-retry across the chain.
+    // Headless: capture + auto-retry across the chain. Buffer any piped prompt
+    // first so it can be replayed to each account a failover lands on.
     const headlessChain = chainKey;
+    const pipedStdin = await readPipedStdin();
     const result = await runWithFallback({
       candidates,
       claudeArgs,
+      stdin: pipedStdin,
       onAttempt: (name, index, total) => {
         logger.dim(
           `[${index + 1}/${total}] trying profile "${name}" (${strategy})…`
@@ -353,7 +371,7 @@ export const runCommand = new Command('run')
       await markUsed(result.succeeded);
       logger.dim(`(served by profile "${result.succeeded}")`);
       await flushRoutingLog();
-      process.exit(result.exitCode);
+      process.exit(result.exitCode ?? 1);
     }
 
     // Non-failover failure surfaced from the last attempt.

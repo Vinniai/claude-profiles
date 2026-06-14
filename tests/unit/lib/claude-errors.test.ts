@@ -61,6 +61,45 @@ describe('classifyOutcome', () => {
     expect(out.kind).toBe('rate_limit');
   });
 
+  it('reads the final envelope of stream-json (NDJSON) output, exit 0', () => {
+    // `claude --output-format stream-json` emits one JSON object per line. The
+    // last line is the result envelope — a rate-limit error here often still
+    // exits 0, so we must parse the envelope, not just trust the exit code.
+    const ndjson = [
+      JSON.stringify({ type: 'system', subtype: 'init' }),
+      JSON.stringify({ type: 'assistant', message: { content: 'working…' } }),
+      JSON.stringify({
+        type: 'result',
+        subtype: 'error',
+        is_error: true,
+        result: 'You have reached your usage limit for Claude.',
+      }),
+    ].join('\n');
+    const out = classifyOutcome({ exitCode: 0, stdout: ndjson, stderr: '' }, NOW);
+    expect(out.ok).toBe(false);
+    expect(out.kind).toBe('rate_limit');
+  });
+
+  it('treats stream-json with a clean final envelope as success', () => {
+    // Earlier lines mention "usage limit" but the envelope is is_error:false —
+    // must not produce a false failover.
+    const ndjson = [
+      JSON.stringify({
+        type: 'assistant',
+        message: { content: 'Your usage limit resets every 5 hours.' },
+      }),
+      JSON.stringify({
+        type: 'result',
+        subtype: 'success',
+        is_error: false,
+        result: 'Your usage limit resets every 5 hours.',
+      }),
+    ].join('\n');
+    const out = classifyOutcome({ exitCode: 0, stdout: ndjson, stderr: '' }, NOW);
+    expect(out.ok).toBe(true);
+    expect(out.kind).toBe('none');
+  });
+
   it('does not fail over on a generic non-zero exit', () => {
     const out = classifyOutcome(
       { exitCode: 2, stdout: '', stderr: 'TypeError: cannot read property x of undefined' },
