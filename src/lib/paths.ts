@@ -35,8 +35,10 @@ export function getClaudeProfilesDir(): string {
     try {
       fs.renameSync(legacy, current);
     } catch {
-      // If migration fails (e.g. permissions), fall back to the legacy dir so
-      // the user's existing profiles remain reachable.
+      // Migration failed. If a concurrent invocation already moved legacy→current
+      // (our rename then ENOENTs), prefer the now-present current dir; otherwise
+      // (e.g. permissions) fall back to legacy so existing profiles stay reachable.
+      if (fs.existsSync(current)) return current;
       return legacy;
     }
   }

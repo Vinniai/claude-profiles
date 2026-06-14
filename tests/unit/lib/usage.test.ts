@@ -162,6 +162,14 @@ describe('parseUsageFromText', () => {
       expect(b.weekly?.resetAt).toBeDefined();
       expect(b.session).toBeUndefined();
     });
+
+    it('does not mis-read a space-separated bare epoch as a clock time', () => {
+      // "resets at 1718200000" has no :/= so epochRe skips it; the clock regex
+      // must NOT grab the leading "17" and record a bogus ~5pm reset.
+      const b = parseUsageFromText('resets at 1718200000', NOW);
+      expect(b.session?.resetAt).toBeUndefined();
+      expect(b.weekly?.resetAt).toBeUndefined();
+    });
   });
 
   describe('observedAt + source stamping', () => {

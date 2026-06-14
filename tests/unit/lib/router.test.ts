@@ -77,6 +77,21 @@ describe('resolveProfileNames', () => {
     expect(resolveProfileNames(c, {})).toEqual(['a', 'b', 'c']);
   });
 
+  it('throws NO_CHAIN when a named chain references only deleted profiles', () => {
+    const c = cfg();
+    c.chains!.work = ['ghost1', 'ghost2']; // members no longer exist
+    expect(() => resolveProfileNames(c, { chain: 'work' })).toThrow(
+      /references only deleted/
+    );
+  });
+
+  it('falls through to all profiles when the default chain is all-deleted', () => {
+    const c = cfg();
+    c.chains!.default = ['ghost']; // default chain points only at a deleted profile
+    // Implicit selection should not return an empty list — fall back to all.
+    expect(resolveProfileNames(c, {})).toEqual(['a', 'b', 'c']);
+  });
+
   it('returns an explicit ad-hoc profile list in order', () => {
     expect(resolveProfileNames(cfg(), { profiles: ['c', 'a'] })).toEqual(['c', 'a']);
   });

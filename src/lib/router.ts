@@ -230,7 +230,17 @@ export function resolveProfileNames(
         `Create it with 'claude-profiles chain create ${opts.chain} --profiles a,b,c'.`
       );
     }
-    return chain.filter((n) => config.profiles[n]);
+    const members = chain.filter((n) => config.profiles[n]);
+    // The chain is non-empty but every member was deleted — surface a clear chain
+    // error rather than a misleading "All 0 profile(s) were exhausted" downstream.
+    if (members.length === 0) {
+      throw new ClaudeProfilesError(
+        `Chain "${opts.chain}" references only deleted profiles`,
+        ErrorCode.NO_CHAIN,
+        `Re-add profiles with 'claude-profiles chain add ${opts.chain} <profile>'.`
+      );
+    }
+    return members;
   }
 
   // No explicit selection: prefer a chain literally named "default", else all
@@ -239,7 +249,10 @@ export function resolveProfileNames(
   // headroom leads and the smallest plan becomes the last-resort backstop.
   const defaultChain = config.chains?.default;
   if (defaultChain && defaultChain.length > 0) {
-    return defaultChain.filter((n) => config.profiles[n]);
+    // Implicit selection: if the default chain's members were all deleted, fall
+    // through to "all profiles" rather than returning an empty list.
+    const members = defaultChain.filter((n) => config.profiles[n]);
+    if (members.length > 0) return members;
   }
 
   const sortKey = (name: string): number => {
