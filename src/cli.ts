@@ -21,6 +21,7 @@ import {
   paceCommand,
   channelCommand,
   fleetCommand,
+  notifyCommand,
 } from './commands/index.js';
 import { ClaudeProfilesError } from './types/index.js';
 import { printLogo } from './utils/logo.js';
@@ -195,6 +196,7 @@ export function createProgram(): Command {
   program.addCommand(paceCommand);
   program.addCommand(channelCommand);
   program.addCommand(fleetCommand);
+  program.addCommand(notifyCommand);
   program.addCommand(handoffCommand);
   program.addCommand(initCommand);
   program.addCommand(syncCommand);

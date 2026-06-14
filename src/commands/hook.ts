@@ -7,15 +7,21 @@ import {
   buildContinuationContext,
   profileNameForConfigDir,
 } from '../lib/handoff.js';
-import { setProfileCooldown, markNeedsAuth } from '../lib/state.js';
-import { routableCandidatesFor } from '../lib/router.js';
-import { decideAutoSwitch } from '../lib/cutover.js';
+import { setProfileCooldown, markNeedsAuth, getProfileState } from '../lib/state.js';
+import { routableCandidatesFor, effectivePolicy } from '../lib/router.js';
+import { decideAutoSwitch, computeCutover } from '../lib/cutover.js';
 import { appendRoutingEvent, flushRoutingLog } from '../lib/routing-log.js';
 import {
   classifyOutcome,
   shouldFailover,
   type FailureKind,
 } from '../lib/claude-errors.js';
+import {
+  buildBudgetGuardrail,
+  buildNotifyPayload,
+  shouldForwardNotification,
+  buildSubagentEvent,
+} from '../lib/hook-events.js';
 
 /**
  * Hidden dispatcher for Claude Code hooks. Wired into the user's shared
@@ -33,12 +39,16 @@ import {
 const RATE_LIMIT_COOLDOWN_MS = 60 * 60 * 1000;
 const SERVER_ERROR_COOLDOWN_MS = 2 * 60 * 1000;
 
+const WEBHOOK_TIMEOUT_MS = 4000;
+
 interface HookInput {
   session_id?: string;
   transcript_path?: string;
   hook_event_name?: string;
   source?: string;
   reason?: string;
+  /** Notification hook: the message Claude Code would surface to the user. */
+  message?: string;
 }
 
 async function readStdin(): Promise<string> {
@@ -255,6 +265,102 @@ async function maybeAutoSwitch(
   );
 }
 
+/**
+ * UserPromptSubmit: a cheap per-turn budget guardrail. When the active account
+ * is near (or over) its effective session cap, inject a short note as
+ * `additionalContext` so the model — and the user reading the turn — know a
+ * switch is coming. Read-only and best-effort; emits nothing when there's no cap
+ * configured, no usage figure, or comfortable headroom.
+ */
+async function onUserPromptSubmit(_input: HookInput, chain: string): Promise<void> {
+  const now = new Date();
+  const config = await loadProfiles();
+  const profile = profileNameForConfigDir(
+    config.profiles,
+    process.env.CLAUDE_CONFIG_DIR
+  );
+  if (!profile) return;
+
+  const s = await getProfileState(profile);
+  const cutover = computeCutover({
+    session: s.usage?.session,
+    policy: effectivePolicy(config, chain, profile),
+    override: s.capOverride,
+    burn: s.burn,
+    now,
+  });
+
+  const note = buildBudgetGuardrail({ profile, cutover });
+  if (!note) return;
+
+  process.stdout.write(
+    JSON.stringify({
+      hookSpecificOutput: {
+        hookEventName: 'UserPromptSubmit',
+        additionalContext: note,
+      },
+    })
+  );
+}
+
+/** POST a Discord/Slack-compatible `{ content }` body to a webhook, best-effort. */
+async function postWebhook(url: string, content: string): Promise<void> {
+  const ctrl = new AbortController();
+  const to = setTimeout(() => ctrl.abort(), WEBHOOK_TIMEOUT_MS);
+  try {
+    await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ content }),
+      signal: ctrl.signal,
+    });
+  } catch {
+    // Best-effort — a failed push must never disturb the host CLI.
+  } finally {
+    clearTimeout(to);
+  }
+}
+
+/**
+ * Notification: forward Claude Code's "waiting for input / needs permission"
+ * pings to the configured webhook (e.g. a Discord channel) so they reach your
+ * phone, tagged with which chain/account is waiting. No-op unless `notify` is
+ * configured.
+ */
+async function onNotification(input: HookInput, chain: string): Promise<void> {
+  const config = await loadProfiles();
+  const notify = config.notify;
+  const message = input.message ?? '';
+  if (!shouldForwardNotification(notify, message)) return;
+
+  const profile = profileNameForConfigDir(
+    config.profiles,
+    process.env.CLAUDE_CONFIG_DIR
+  );
+  const { content } = buildNotifyPayload({ message, profile, chain });
+  await postWebhook(notify!.webhookUrl!, content);
+}
+
+/**
+ * SubagentStop: record a subagent completion in the routing log so delegate /
+ * fleet work shows up in the routing history under the active account.
+ */
+async function onSubagentStop(input: HookInput, chain: string): Promise<void> {
+  const config = await loadProfiles();
+  const profile = profileNameForConfigDir(
+    config.profiles,
+    process.env.CLAUDE_CONFIG_DIR
+  );
+
+  const { lastAssistantText } = await summarizeTranscript(input.transcript_path);
+  const reason = lastAssistantText
+    ? `subagent completed — ${lastAssistantText.slice(0, 140)}`
+    : 'subagent completed';
+
+  await appendRoutingEvent(buildSubagentEvent({ profile: profile ?? null, chain, reason }));
+  await flushRoutingLog();
+}
+
 export const hookCommand = new Command('_hook')
   .description('(internal) Claude Code hook dispatcher for continuity/failover')
   .argument('<event>', 'Hook event name')
@@ -273,6 +379,12 @@ export const hookCommand = new Command('_hook')
         event === 'PreCompact'
       ) {
         await onSnapshot(input, chain, event);
+      } else if (event === 'UserPromptSubmit') {
+        await onUserPromptSubmit(input, chain);
+      } else if (event === 'Notification') {
+        await onNotification(input, chain);
+      } else if (event === 'SubagentStop') {
+        await onSubagentStop(input, chain);
       }
     } catch {
       // Never let a hook failure surface into the host CLI.

@@ -44,6 +44,7 @@ import {
   orchestratorSystemPrompt,
   remoteControlReadme,
   coordinatorArgs,
+  coordinatorEnv,
   selfInvocation,
 } from '../../../src/fleet/orchestrator.js';
 import { setProfileCooldown, markNeedsAuth, markUsed } from '../../../src/lib/state.js';
@@ -138,6 +139,17 @@ describe('orchestrator helpers', () => {
     expect(args[0]).toBe('remote-control');
     expect(args).toEqual(['remote-control', '--name', 'Coord']);
     expect(args).not.toContain('--mcp-config');
+  });
+  it('coordinatorEnv sets CLAUDE_PROFILES_CHAIN so hooks fire (name, else lead)', () => {
+    const base = { ANTHROPIC_API_KEY: 'sk-x', PATH: '/bin' };
+    const named = coordinatorEnv({ lead: 'josh', name: 'session' }, '/c/josh', base);
+    expect(named.CLAUDE_CONFIG_DIR).toBe('/c/josh');
+    expect(named.ANTHROPIC_API_KEY).toBeUndefined();
+    expect(named.CLAUDE_PROFILES_CHAIN).toBe('session');
+    expect(named.CLAUDE_PROFILES_RUN).toBe('1');
+
+    const unnamed = coordinatorEnv({ lead: 'josh' }, '/c/josh', base);
+    expect(unnamed.CLAUDE_PROFILES_CHAIN).toBe('josh');
   });
   it('remoteControlReadme shows the lead, port, and control endpoints', () => {
     const rm = remoteControlReadme('josh', 8798);

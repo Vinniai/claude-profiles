@@ -131,6 +131,8 @@ export function routingCategory(kind: RoutingEventKind): RoutingCategory {
       return 'auto-failover';
     case 'exhausted':
       return 'exhausted';
+    case 'subagent':
+      return 'subagent';
     case 'launch':
     default:
       return 'launch';
@@ -162,6 +164,8 @@ export function routingLabel(kind: RoutingEventKind): RoutingLabel {
       return { glyph: '◇', text: 'auto-switch (policy)' };
     case 'exhausted':
       return { glyph: '×', text: 'exhausted' };
+    case 'subagent':
+      return { glyph: '◦', text: 'subagent' };
     case 'launch':
     default:
       return { glyph: '▸', text: 'launch' };

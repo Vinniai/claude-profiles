@@ -143,6 +143,24 @@ export interface ProfileConfig {
   routing?: RoutingConfig;
   /** Per-chain routing overrides, keyed by chain name (wins over `routing`). */
   chainRouting?: Record<string, RoutingConfig>;
+  /** Where to forward Claude Code `Notification` hook events (e.g. Discord). */
+  notify?: NotifyConfig;
+}
+
+/**
+ * Forward Claude Code's `Notification` hook events (the "waiting for input" /
+ * "needs permission" pings) to an external webhook so they reach your phone.
+ * The payload is a Discord-compatible `{ content }` JSON POST, which also works
+ * for Slack incoming webhooks and most generic webhook receivers.
+ */
+export interface NotifyConfig {
+  /** Webhook URL to POST notifications to. Unset → notifications are not forwarded. */
+  webhookUrl?: string;
+  /**
+   * Only forward notifications whose message contains one of these substrings
+   * (case-insensitive). Omit/empty → forward every notification.
+   */
+  events?: string[];
 }
 
 /**
@@ -237,7 +255,8 @@ export type RoutingEventKind =
   | 'auth'
   | 'server'
   | 'policy'
-  | 'exhausted';
+  | 'exhausted'
+  | 'subagent';
 
 export const ROUTING_EVENT_KINDS: readonly RoutingEventKind[] = [
   'launch',
@@ -247,10 +266,16 @@ export const ROUTING_EVENT_KINDS: readonly RoutingEventKind[] = [
   'server',
   'policy',
   'exhausted',
+  'subagent',
 ] as const;
 
 /** High-level category used to label events in the UI. */
-export type RoutingCategory = 'launch' | 'deliberate' | 'auto-failover' | 'exhausted';
+export type RoutingCategory =
+  | 'launch'
+  | 'deliberate'
+  | 'auto-failover'
+  | 'exhausted'
+  | 'subagent';
 
 /**
  * One entry in the persisted routing log — the time-series of how work has been

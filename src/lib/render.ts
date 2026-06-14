@@ -29,6 +29,7 @@ function categoryColor(kind: RoutingEventKind): (s: string) => string {
   if (cat === 'deliberate') return chalk.cyan;
   if (cat === 'auto-failover') return chalk.yellow;
   if (cat === 'exhausted') return chalk.red;
+  if (cat === 'subagent') return chalk.gray;
   return orange; // launch
 }
 

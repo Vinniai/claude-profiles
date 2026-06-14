@@ -16,6 +16,9 @@ export const HOOK_EVENTS = [
   'Stop',
   'SessionEnd',
   'PreCompact',
+  'UserPromptSubmit',
+  'Notification',
+  'SubagentStop',
 ] as const;
 
 export type HookEvent = (typeof HOOK_EVENTS)[number];

@@ -412,6 +412,9 @@ This is powered by a **shared directory** and a set of **auto-installed hooks**:
 - **Hooks** (added to your shared `~/.claude/settings.json`, tagged and removable):
   - `Stop` / `SessionEnd` / `PreCompact` → snapshot the conversation to the shared store; if the last turn hit a limit/auth error, record the active profile's cooldown and set `pendingFailover`.
   - `SessionStart` → **only after a failover**, inject the prior summary via `additionalContext` so the new account picks up seamlessly, then clear the flag.
+  - `UserPromptSubmit` → a per-turn **budget guardrail**: when the active account is near or over its effective session cap, inject a short "you're at X% — a switch is coming" note as `additionalContext`. Read-only; silent when there's headroom or no cap configured.
+  - `Notification` → forward Claude Code's "waiting for input / needs permission" pings to a webhook (e.g. a Discord channel), tagged with which chain/account is waiting, so they reach your phone. No-op unless you've run `claude-profiles notify set <webhook-url>`.
+  - `SubagentStop` → log each subagent completion to the routing history, so fleet / delegate work shows up under the active account in `chain status` / routing log.
 
 Continuity kicks in **only after a failover** — a clean session ends with no `pendingFailover`, so a fresh launch never re-injects last conversation's context. Use `run --new` to force a fresh thread.
 
@@ -423,6 +426,23 @@ claude-profiles handoff enable         # install the hooks
 claude-profiles handoff disable        # remove them
 claude-profiles handoff clear [chain]  # drop stored context (one chain, or all)
 ```
+
+### Phone notifications
+
+The `Notification` hook can forward Claude Code's "waiting for input / needs permission"
+pings to any webhook — a Discord channel webhook (or Slack incoming webhook) turns them
+into phone pushes, tagged with which chain/account is waiting:
+
+```bash
+claude-profiles notify set https://discord.com/api/webhooks/…   # forward all pings
+claude-profiles notify set <url> --events waiting,permission     # only matching messages
+claude-profiles notify test                                      # send a test ping
+claude-profiles notify status                                    # show current config
+claude-profiles notify clear                                     # stop forwarding
+```
+
+Like the other hooks it no-ops unless a session was launched through a chain, and forwards
+nothing until a webhook is set.
 
 ## Fleet: one orchestrator, many accounts
 

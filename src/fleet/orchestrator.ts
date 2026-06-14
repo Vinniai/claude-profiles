@@ -139,6 +139,26 @@ export function coordinatorArgs(opts: CoordinatorOptions, mcpConfigPath: string)
 }
 
 /**
+ * Env for the coordinator's `claude` child. Starts from `workerEnv` (pins the
+ * lead's config dir, scrubs API-key vars so it stays on subscription OAuth) and
+ * then sets `CLAUDE_PROFILES_CHAIN` so our continuity/budget/notify/subagent
+ * hooks recognise this as a chain-launched session and fire — without it they
+ * no-op, and a coordinator you steer from your phone would silently skip the
+ * budget guardrail and notification forwarding. The chain label is the session
+ * name when given, else the lead profile name.
+ */
+export function coordinatorEnv(
+  opts: CoordinatorOptions,
+  configDir: string,
+  base: NodeJS.ProcessEnv = process.env,
+): NodeJS.ProcessEnv {
+  const env = workerEnv(configDir, base);
+  env.CLAUDE_PROFILES_CHAIN = opts.name ?? opts.lead;
+  env.CLAUDE_PROFILES_RUN = '1';
+  return env;
+}
+
+/**
  * Register the fleet MCP server into a profile's user-scope config (idempotent).
  * Needed for server mode, which can't take `--mcp-config`. Returns whether it was
  * newly added. Best-effort: an "already exists" error counts as success.
@@ -187,7 +207,7 @@ export async function launchCoordinator(opts: CoordinatorOptions): Promise<numbe
 
   return new Promise<number>((resolve, reject) => {
     const child = doSpawn(claudeBin(), args, {
-      env: workerEnv(configDir),
+      env: coordinatorEnv(opts, configDir),
       stdio: 'inherit',
     });
     const forward = (sig: NodeJS.Signals) => child.kill(sig);

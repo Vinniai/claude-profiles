@@ -15,3 +15,4 @@ export { cutoverCommand } from './cutover.js';
 export { paceCommand } from './pace.js';
 export { channelCommand } from './channel.js';
 export { fleetCommand } from './fleet.js';
+export { notifyCommand } from './notify.js';
