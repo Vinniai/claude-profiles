@@ -14,7 +14,7 @@ import {
 import { ClaudeProfilesError, ErrorCode } from '../types/index.js';
 
 /**
- * Remote-control **orchestrator** — a single lead profile (e.g. `josh`) run as a
+ * Remote-control **orchestrator** — a single lead profile (e.g. `alice`) run as a
  * headless `claude -p` session that you drive over HTTP. The lead has the fleet
  * MCP server wired in via `--mcp-config`, so it can call `delegate` /
  * `delegate_parallel` / `fleet_status` to push work onto your OTHER accounts and
@@ -25,7 +25,7 @@ import { ClaudeProfilesError, ErrorCode } from '../types/index.js';
  * so the conversation continues across calls. This is the "kick it off, then send
  * it prompts" loop — the lead is the orchestrator, the fleet are its hands.
  *
- *   claude-profiles fleet --remote-control --lead josh
+ *   claude-profiles fleet --remote-control --lead alice
  *   curl -s localhost:8798/control -d '{"prompt":"…"}'
  */
 
