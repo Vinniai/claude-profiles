@@ -297,3 +297,115 @@ failing test, then implement until green):
 **Build clean, 564 unit tests pass** (548 → **+16** across the four commits). The fleet didn't
 just fix a one-off backlog — it ran a repeatable find → fix → verify loop on itself and tightened
 the same concurrency, parsing, and failover paths it depends on to run.
+
+---
+
+# Run 5 — coordinator auto-resume
+
+**The question:** `claude remote-control` server mode exposes `--name`, `--permission-mode`,
+and a handful of other flags — but **no `--resume`**, **no `--continue`**, **no
+`--fork-session`**. If the operator kills the coordinator and relaunches it, is the previous
+conversation simply gone?
+
+**The answer:** no. The fleet coordinator snapshots every turn to the shared handoff store
+(`~/.claude/.claude-profiles/handoff/<name>/current.json`). On a relaunch of the same
+`--name`, a one-shot `pendingResume` flag is staged; the SessionStart hook consumes it to
+inject the prior conversation summary as `additionalContext`, then clears the flag so it
+fires exactly once. The coordinator picks up where it left off — no `--resume` flag needed.
+
+## The session
+
+```bash
+# First launch — nothing to resume for this name yet
+claude-profiles fleet coordinator --lead alice --name orchestrator --server
+```
+
+From the device, a codeword and a pending task were planted:
+
+> The codeword is **TANGERINE**. Your pending task is to draft a fleet-status summary once
+> carol is back online. Acknowledge both.
+
+The coordinator acknowledged both. On the machine, the Stop hook fired and snapshotted the
+turn to the handoff store:
+
+```bash
+$ cat ~/.claude/.claude-profiles/handoff/orchestrator/current.json \
+    | jq '{summary: .summary, pendingResume: .pendingResume}'
+{
+  "summary": "User planted codeword TANGERINE and a pending task: draft a fleet-status …",
+  "pendingResume": null
+}
+```
+
+The coordinator was killed (`pkill -f "claude remote-control"`), then relaunched with the
+**same `--name`** and **no `--fresh`**:
+
+```bash
+claude-profiles fleet coordinator --lead alice --name orchestrator --server
+```
+
+Launch output (abridged):
+
+```
+resuming the "orchestrator" coordinator's previous session…
+[env ready]  https://claude.ai/code?environment=env_…
+```
+
+The handoff store now showed `pendingResume: true` — the SessionStart hook was about to fire.
+The new session URL was opened on the device and asked cold, without re-explaining anything:
+
+> What was the codeword I gave you, and what task was pending?
+
+**Response (verbatim):** "The codeword you gave me was **TANGERINE**, and the pending task
+was to draft a fleet-status summary once carol is back online."
+
+After that reply, the `pendingResume` flag had been consumed:
+
+```bash
+$ cat ~/.claude/.claude-profiles/handoff/orchestrator/current.json | jq '.pendingResume'
+false
+```
+
+One-shot: the injection fired once, the flag cleared, and subsequent turns run as a normal
+continuation — no re-injected preamble, no duplicate context.
+
+## The negative control
+
+The coordinator was killed a second time and relaunched with `--fresh`:
+
+```bash
+claude-profiles fleet coordinator --lead alice --name orchestrator --fresh --server
+```
+
+No "resuming…" line in the launch log. The handoff file remained on disk — `--fresh` does
+not wipe it — but `pendingResume` was left `false`, so the SessionStart hook had nothing
+to inject. The same device prompt ("What was the codeword?") produced a blank: the
+coordinator had no knowledge of TANGERINE. That blank is the proof: the prior recall came
+entirely from the resume injection, not from persistent model memory or hallucination.
+
+## How it works
+
+The mechanism is the same handoff machinery used for worker failover, with a different
+one-shot flag and different injected wording:
+
+| Scenario | Flag | Injected wording |
+|---|---|---|
+| Worker account became unavailable | `pendingFailover` | "… account became unavailable, picking up here…" |
+| Coordinator relaunched (same `--name`) | `pendingResume` | "resuming the \"<name>\" coordinator's previous session…" |
+
+Both are consumed by the SessionStart hook in a single pass and cleared immediately —
+a missed hook (e.g. the process is killed before the hook fires) simply means the next
+launch retries the same injection, which is safe because the summary is idempotent.
+
+`--fresh` suppresses auto-resume by leaving `pendingResume` false before the hook has a
+chance to stage it. The snapshot (`current.json`) is preserved, so a later relaunch
+without `--fresh` can still pick it up.
+
+## Takeaway
+
+Server-mode Remote Control gives the coordinator zero native resume primitives — yet the
+coordinator survives a kill-and-relaunch transparently. The device operator sees no gap:
+they re-open the session URL, ask the first question, and get an answer that reflects
+everything that happened before the restart. The punchline is that this required no changes
+to the `claude` binary or to claude.ai/code — only the handoff store, a Stop hook to
+write it, and a SessionStart hook to read it back in.

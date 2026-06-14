@@ -356,6 +356,7 @@
         <li><a href="#shorthand">Shorthand</a></li>
         <li><a href="#routing">Routing</a></li>
         <li><a href="#fleet">Fleet</a></li>
+        <li><a href="#coordinator">Coordinator</a></li>
         <li><a href="#commands">Commands</a></li>
         <li><a href="https://github.com/Vinniai/claude-profiles" class="nav-github">GitHub ↗</a></li>
       </ul>
@@ -484,6 +485,26 @@
           <div class="feature-icon">🔀</div>
           <h3>Channel: mid-run switching</h3>
           <p>An optional MCP sidecar pushes health events into a live session and accepts a deliberate account switch — stamped <code>◆ manual</code> — without leaving Claude.</p>
+        </div>
+        <div class="feature-card">
+          <div class="feature-icon">📱</div>
+          <h3>Steer from your phone</h3>
+          <p>Launch any fleet account as an official Remote Control session reachable at <code>claude.ai/code</code> or the Claude mobile app — with full MCP fleet tools attached so you delegate to <code>bob</code>/<code>carol</code> from anywhere.</p>
+        </div>
+        <div class="feature-card">
+          <div class="feature-icon">🔁</div>
+          <h3>Coordinator auto-resume</h3>
+          <p>Relaunching the coordinator with the same <code>--name</code> picks up its previous conversation exactly where it left off — no re-explaining. Use <code>--fresh</code> to start clean under the same name.</p>
+        </div>
+        <div class="feature-card">
+          <div class="feature-icon">💰</div>
+          <h3>Budget guardrail</h3>
+          <p>A per-turn hook injects a short notice when the active account is near or over its effective session cap — visible to the model and user — so the fleet never burns through budget silently.</p>
+        </div>
+        <div class="feature-card">
+          <div class="feature-icon">🔔</div>
+          <h3>Phone notifications</h3>
+          <p>Forwards Claude Code's "waiting for input / needs permission" pings to a Discord or Slack webhook, tagged with which chain and account is waiting. Set once with <code>notify set &lt;url&gt;</code>.</p>
         </div>
       </div>
     </div>
@@ -630,6 +651,55 @@ claude-profiles atlas:3 orion:2 vega:1 -- -p "hi"'>Copy</button>
     </div>
   </section>
 
+  <!-- ── Coordinator ──────────────────────────────────────────── -->
+  <section id="coordinator" class="section">
+    <div class="container">
+      <span class="section-label">Remote Control</span>
+      <h2 class="section-heading">Steer the fleet from your phone</h2>
+      <p class="section-sub">
+        Launch any fleet account as an official Claude Code Remote Control session — reachable from
+        <code>claude.ai/code</code> or the Claude mobile app — with the full fleet MCP tools attached.
+        Direct <em>alice</em> to delegate work to <em>bob</em>, <em>carol</em>, and <em>dave</em>
+        and synthesize the results, all from your pocket.
+      </p>
+
+      <div class="code-block" style="margin-bottom:22px">
+        <div class="code-header">
+          <span class="code-label">launch the coordinator</span>
+          <button class="copy-btn" data-copy="claude-profiles fleet coordinator --lead alice --name orchestrator --server">Copy</button>
+        </div>
+<pre><span class="prompt">$ </span><span class="cmd">claude-profiles fleet coordinator</span> <span class="flag">--lead</span> <span class="arg">alice</span> <span class="flag">--name</span> <span class="arg">orchestrator</span> <span class="flag">--server</span>
+<span class="comment"># Opens alice as a Remote Control session · connect at claude.ai/code or the mobile app</span>
+<span class="comment"># Fleet MCP tools (delegate / delegate_parallel / fleet_status) are attached automatically</span>
+<span class="comment"># Drop --server for an interactive terminal session that is also reachable from a device</span></pre>
+      </div>
+
+      <div class="strat-grid" style="margin-bottom:24px">
+        <div class="strat-card">
+          <div class="strat-name">Official Remote Control</div>
+          <p>Uses Claude Code's built-in Remote Control — not a third-party tunnel. The session runs <strong>locally</strong> on your machine; Remote Control is a remote screen into the local <code>claude</code> process. Subscription OAuth only — API-key env vars are scrubbed before launch.</p>
+        </div>
+        <div class="strat-card">
+          <div class="strat-name">Delegate from anywhere</div>
+          <p>With the fleet MCP tools loaded, the coordinator (<em>alice</em>) can call <code>delegate</code> or <code>delegate_parallel</code> to hand work off to <em>bob</em>, <em>carol</em>, <em>dave</em>, or any profile in the chain — and read back <code>fleet_status</code> to see who is healthy.</p>
+        </div>
+        <div class="strat-card">
+          <div class="strat-name">Auto-resume by name</div>
+          <p>Relaunching <code>fleet coordinator</code> with the same <code>--name</code> continues the previous conversation where it left off. Every turn snapshots the transcript to the shared handoff store, and on relaunch a one-shot <code>pendingResume</code> flag injects the prior summary exactly once.</p>
+        </div>
+        <div class="strat-card">
+          <div class="strat-name">--fresh for a clean slate</div>
+          <p>Pass <code>--fresh</code> to opt out of auto-resume and start a clean conversation under the same coordinator name. The first launch of a name always starts clean — there is nothing to resume yet.</p>
+        </div>
+      </div>
+
+      <div class="note-box">
+        <span class="note-icon">💡</span>
+        <p><strong>Server mode vs interactive mode.</strong> <code>--server</code> drives the session entirely from your phone or browser — no terminal interaction needed on the host. Omit <code>--server</code> if you also want a local terminal session that is simultaneously reachable from a device. Use <code>--permission-mode &lt;mode&gt;</code> to control how the coordinator handles approval prompts.</p>
+      </div>
+    </div>
+  </section>
+
   <!-- ── Quickstart ────────────────────────────────────────────── -->
   <section id="quickstart" class="section">
     <div class="container">
@@ -750,6 +820,21 @@ claude-fleet -- -p "summarize this repo"'>Copy</button></div>
             <tr><td>channel</td><td>Start the optional MCP sidecar (stdio + a 127.0.0.1 control face) for live health events and deliberate mid-run account switches.</td></tr>
             <tr><td>sync push / pull / status</td><td>Optional Git-based config synchronisation across machines.</td></tr>
             <tr><td>init</td><td>Initialise claude-profiles in the current environment.</td></tr>
+          </tbody>
+        </table></div>
+      </div>
+
+      <div class="cmd-section">
+        <p class="cmd-section-title">Fleet coordinator &amp; notifications</p>
+        <div class="table-wrap"><table class="cmd-table">
+          <thead><tr><th>Command</th><th>Options</th><th>Description</th></tr></thead>
+          <tbody>
+            <tr><td>fleet coordinator --lead &lt;name&gt;</td><td><span class="opt">--name &lt;label&gt;</span><br><span class="opt">--server</span><br><span class="opt">--fresh</span><br><span class="opt">--permission-mode &lt;mode&gt;</span></td><td>Launch the named profile as an official Claude Code Remote Control session with fleet MCP tools (<code>delegate</code> / <code>delegate_parallel</code> / <code>fleet_status</code>) attached. Connect at <code>claude.ai/code</code> or the Claude mobile app. Omit <code>--server</code> for a terminal session that is also remotely reachable. Relaunching with the same <code>--name</code> auto-resumes the prior conversation; <code>--fresh</code> starts clean.<span class="note">Subscription OAuth only — API-key env vars are scrubbed. Runs locally; Remote Control is a remote screen into the local process.</span></td></tr>
+            <tr><td>fleet status</td><td><span class="opt">--chain &lt;name&gt;</span></td><td>Show a live health summary of every account in the fleet — state, plan tier, cooldown time, and last failover label — from within a running coordinator session or the terminal.</td></tr>
+            <tr><td>notify set &lt;webhook-url&gt;</td><td><span class="opt">--events &lt;list&gt;</span></td><td>Register a Discord or Slack incoming webhook to receive notifications when any chain account is waiting for input or needs a permission approval. <code>--events</code> defaults to <code>waiting,permission</code>.<span class="note">Notifications are tagged with the chain name and account that is waiting. No-ops unless the session was launched through a chain.</span></td></tr>
+            <tr><td>notify status</td><td>—</td><td>Show the currently configured webhook URL and event filter.</td></tr>
+            <tr><td>notify test</td><td>—</td><td>Send a test ping to the configured webhook to verify delivery.</td></tr>
+            <tr><td>notify clear</td><td>—</td><td>Remove the saved webhook and disable phone notifications.</td></tr>
           </tbody>
         </table></div>
       </div>
