@@ -53,7 +53,7 @@ export const fleetCommand = new Command('fleet')
 fleetCommand
   .command('http-control')
   .description('Run a lead profile as a headless orchestrator you drive over localhost HTTP (POST /control)')
-  .requiredOption('--lead <profile>', 'The orchestrator (lead) profile, e.g. josh')
+  .requiredOption('--lead <profile>', 'The orchestrator (lead) profile, e.g. alice')
   .option('-p, --port <port>', 'Localhost HTTP port', '8798')
   .option('--prompt <prompt>', 'An initial kickoff prompt to run at startup')
   .action(async (opts: { lead: string; port: string; prompt?: string }) => {
@@ -79,7 +79,7 @@ fleetCommand
   .description(
     'Launch a lead profile as a Remote Control session (steer from claude.ai/code or the Claude app) with the fleet tools attached',
   )
-  .requiredOption('--lead <profile>', 'The coordinator (lead) profile, e.g. josh')
+  .requiredOption('--lead <profile>', 'The coordinator (lead) profile, e.g. alice')
   .option('-n, --name <name>', 'Session title shown at claude.ai/code')
   .option('--server', 'Use `claude remote-control` server mode (drive entirely from a device)')
   .option('--permission-mode <mode>', 'Permission mode (acceptEdits, dontAsk, bypassPermissions, …)')

@@ -54,8 +54,8 @@ Three in-session helpers keep you efficient without thinking about it:
 
   ```text
   Opus 4.8 · ⎇ main
-  ▸ josh    5h ▓▓▓▓▓▓▓▓░░  78%  7d ▓▓░░░░░░░░  22%   switch ~1m
-    lockie  5h ▓░░░░░░░░░   5%  7d ░░░░░░░░░░   4%   ↑ next
+  ▸ alice    5h ▓▓▓▓▓▓▓▓░░  78%  7d ▓▓░░░░░░░░  22%   switch ~1m
+    bob  5h ▓░░░░░░░░░   5%  7d ░░░░░░░░░░   4%   ↑ next
   ```
 
 > 📊 See the [live showcase](docs/showcase.html), [strategy deep-dive](docs/strategic-routing.html), and [routing log & labels](docs/routing-log-and-labels.html) for the full visual walkthrough.
@@ -459,16 +459,16 @@ Inside that session, the orchestrator can now:
 - **`fleet_status()`** — health, plan, last-used, and cached usage per profile.
 
 So one remote session on your main subscription can coordinate two (or more) of your other
-accounts — e.g. delegate a refactor to `lockie` and a doc pass to `trev` in parallel, then
+accounts — e.g. delegate a refactor to `bob` and a doc pass to `carol` in parallel, then
 synthesize both results — all on subscription OAuth.
 
 ### CLI (handy for testing)
 
 ```bash
 claude-profiles fleet status                         # health of every profile
-claude-profiles fleet run lockie "summarize ./README.md"   # one-shot dispatch
-claude-profiles fleet run lockie "and the next steps?" --resume <sessionId>   # continue
-claude-profiles fleet parallel '[{"profile":"lockie","prompt":"a"},{"profile":"trev","prompt":"b"}]'
+claude-profiles fleet run bob "summarize ./README.md"   # one-shot dispatch
+claude-profiles fleet run bob "and the next steps?" --resume <sessionId>   # continue
+claude-profiles fleet parallel '[{"profile":"bob","prompt":"a"},{"profile":"carol","prompt":"b"}]'
 ```
 
 The server also exposes a localhost-only HTTP face (default `:8798`, disable with
@@ -484,7 +484,7 @@ later `delegate` to that account knows to wait.
 
 The fleet tools assume the orchestrator is an interactive Claude session you're sitting in.
 To steer one **from a device** — claude.ai/code or the Claude mobile app — use the
-**coordinator**, which launches a **lead** profile (e.g. `josh`) as an official Claude Code
+**coordinator**, which launches a **lead** profile (e.g. `alice`) as an official Claude Code
 [Remote Control](https://code.claude.com/docs/en/remote-control) session with the fleet MCP
 attached. The lead can then `delegate` / `delegate_parallel` to your other accounts and
 synthesize the results, all driven by prompts you type on the device.
@@ -497,7 +497,7 @@ synthesize the results, all driven by prompts you type on the device.
 
 ```bash
 # Server mode — drive entirely from a device. Prints the env URL when ready.
-claude-profiles fleet coordinator --lead josh --server --name "Fleet coordinator (josh)"
+claude-profiles fleet coordinator --lead alice --server --name "Fleet coordinator (alice)"
 # → open https://claude.ai/code?environment=env_… on your phone or browser
 ```
 
@@ -510,7 +510,7 @@ MCP server.
 
 Once connected, steer it like any session — e.g. type on your phone:
 
-> Use `delegate_parallel` to have `lockie` audit `./api` for auth bugs and `mini-trev`
+> Use `delegate_parallel` to have `bob` audit `./api` for auth bugs and `carol`
 > review `./web` for a11y issues, then merge both into one prioritized list.
 
 For a full, documentable QA protocol — multi-agent fan-out, **plan mode**, threading,
@@ -525,22 +525,22 @@ with the fleet MCP wired in; its session is threaded via `--resume`, so context 
 across calls.
 
 ```bash
-# 1. Kick off the orchestrator on the josh profile (long-running; localhost :8798)
-claude-profiles fleet http-control --lead josh
+# 1. Kick off the orchestrator on the alice profile (long-running; localhost :8798)
+claude-profiles fleet http-control --lead alice
 ```
 
 ```bash
-# 2. Drive it — POST the prompt that tells josh to control the rest:
+# 2. Drive it — POST the prompt that tells alice to control the rest:
 curl -s localhost:8798/control -d '{
-  "prompt": "Use delegate_parallel to have lockie audit ./api for auth bugs and mini-trev review ./web for a11y issues, then merge both into one prioritized list."
+  "prompt": "Use delegate_parallel to have bob audit ./api for auth bugs and carol review ./web for a11y issues, then merge both into one prioritized list."
 }'
 ```
 
 ```jsonc
-// josh plans, calls delegate_parallel against lockie + mini-trev, and returns:
+// alice plans, calls delegate_parallel against bob + carol, and returns:
 {
   "ok": true,
-  "lead": "josh",
+  "lead": "alice",
   "text": "Merged findings:\n1. …",
   "orchestratorSession": "148143a4-…",   // reused on the next /control call
   "costUsd": 0.30,
@@ -550,7 +550,7 @@ curl -s localhost:8798/control -d '{
 
 ```bash
 # 3. Keep the conversation going — same session, context intact:
-curl -s localhost:8798/control -d '{"prompt":"Now have lockie fix the top item and report the diff."}'
+curl -s localhost:8798/control -d '{"prompt":"Now have bob fix the top item and report the diff."}'
 
 # Health (lead + every account) / start a fresh thread:
 curl -s localhost:8798/status

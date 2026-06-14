@@ -1,8 +1,8 @@
 # Fleet Coordinator — Showcase Runs (2026-06-14)
 
 Two real, logged end-to-end runs of a multi-account fleet job: **plan → parallel dispatch →
-synthesize**, with the lead (`josh`) splitting work across two other accounts (`lockie`,
-`mini-trev`) reviewing *this very codebase*.
+synthesize**, with the lead (`alice`) splitting work across two other accounts (`bob`,
+`carol`) reviewing *this very codebase*.
 
 - **Run 1 — headless** (`fleet http-control`, operator-driven over localhost HTTP): found
   five genuine quirks in the fleet code, all verified.
@@ -26,7 +26,7 @@ the fleet code, all independently verified below.
 ## The job
 
 ```bash
-claude-profiles fleet http-control --lead josh        # lead = josh; workers = lockie, mini-trev
+claude-profiles fleet http-control --lead alice        # lead = alice; workers = bob, carol
 ```
 
 Prompt POSTed to `localhost:8798/control` (abridged):
@@ -34,9 +34,9 @@ Prompt POSTed to `localhost:8798/control` (abridged):
 > **PHASE 1 — PLAN:** write a numbered plan: which account gets which file + the exact
 > sub-prompt each will receive.
 > **PHASE 2 — DISPATCH:** `delegate_parallel` →
-> · `lockie`: top 3 reliability/correctness risks in `src/lib/fleet.ts` as
+> · `bob`: top 3 reliability/correctness risks in `src/lib/fleet.ts` as
 >   `file:line — risk — why`
-> · `mini-trev`: same for `src/fleet/orchestrator.ts`
+> · `carol`: same for `src/fleet/orchestrator.ts`
 > **PHASE 3 — SYNTHESIZE:** merge into one prioritized top-5, deduped, + an overlap note.
 
 ## The result
@@ -53,14 +53,14 @@ Prompt POSTed to `localhost:8798/control` (abridged):
 timestamp in one poll = true concurrent fan-out):
 
 ```
-[20:54:26] coord=up mcp_children=2 lockie=…03:33:38.815Z  mini-trev=…03:33:38.815Z   # baseline at dispatch
-[20:55:06] coord=up mcp_children=2 lockie=…03:54:39.345Z  mini-trev=…03:54:39.345Z   # both fired together
+[20:54:26] coord=up mcp_children=2 bob=…03:33:38.815Z  carol=…03:33:38.815Z   # baseline at dispatch
+[20:55:06] coord=up mcp_children=2 bob=…03:54:39.345Z  carol=…03:54:39.345Z   # both fired together
 [20:55:17] coord=up mcp_children=1 …                                                  # http-control MCP child exits
 ```
 
 ### Synthesized answer (verbatim)
 
-> Both workers healthy (lockie 5%/wk 4%, mini-trev 7%/wk 1%); ran concurrently. Top 5 by severity:
+> Both workers healthy (bob 5%/wk 4%, carol 7%/wk 1%); ran concurrently. Top 5 by severity:
 >
 > 1. **`orchestrator.ts:313`** — `void handle(req,res)` swallows rejections — client socket hangs forever; an unhandled rejection can crash the process.
 > 2. **`fleet.ts:139`** — timeout only sends `SIGTERM`, no `SIGKILL` escalation — a child ignoring SIGTERM never closes, so `timeoutMs` isn't a hard kill.
@@ -125,8 +125,8 @@ tooling worth improving:
 
 # Run 2 — device + plan mode (`fleet coordinator`)
 
-The real headline test: `josh` launched as an **official Remote Control** session
-(`fleet coordinator --lead josh --server`) and steered entirely from **claude.ai/code**,
+The real headline test: `alice` launched as an **official Remote Control** session
+(`fleet coordinator --lead alice --server`) and steered entirely from **claude.ai/code**,
 using **plan mode** as an approval gate before any delegation.
 
 ## The job
@@ -134,9 +134,9 @@ using **plan mode** as an approval gate before any delegation.
 Entered from the device in plan mode (abridged):
 
 > Plan a fleet hardening job — **do not delegate yet, just propose**:
-> · `lockie` → the two `src/lib/fleet.ts` issues (SIGTERM-only timeout; all-or-nothing
+> · `bob` → the two `src/lib/fleet.ts` issues (SIGTERM-only timeout; all-or-nothing
 >   `Promise.all`)
-> · `mini-trev` → the two `src/fleet/orchestrator.ts` issues (`void handle` no try/catch;
+> · `carol` → the two `src/fleet/orchestrator.ts` issues (`void handle` no try/catch;
 >   raced `sessionId`)
 > · each worker reads the real file and returns root cause + concrete fix (code sketch) + risk
 > · synthesize all four and **write `docs/fleet-hardening-plan.md`**. Wait for my approval.
@@ -149,14 +149,14 @@ Reviewed the plan on-device → **approved** → it executed `delegate_parallel`
 |---|---|
 | Steering | claude.ai/code → local coordinator (PID 55194), server mode |
 | Gate | plan mode — proposed, then waited for approval |
-| Dispatch | `delegate_parallel` → lockie + mini-trev concurrently |
+| Dispatch | `delegate_parallel` → bob + carol concurrently |
 | Artifact | **`docs/fleet-hardening-plan.md`** — 232 lines / 11,298 bytes, on local disk |
 
 **Local proof** (baseline `…03:54:39.345Z`):
 
 ```
-[21:12:20] baseline           lockie=…03:54:39.345Z  mini-trev=…03:54:39.345Z
-[21:21:06] coord=up mcp=0      lockie=…04:20:24.362Z  mini-trev=…04:20:24.362Z   # both, same poll
+[21:12:20] baseline           bob=…03:54:39.345Z  carol=…03:54:39.345Z
+[21:21:06] coord=up mcp=0      bob=…04:20:24.362Z  carol=…04:20:24.362Z   # both, same poll
                                                                                   # + artifact watcher fired
 ```
 
@@ -205,7 +205,7 @@ surfaced.
 
 # Run 3 — implement + verify the plan
 
-The fleet's own backlog, closed. From the remote-controlled `josh` session, all four fixes in
+The fleet's own backlog, closed. From the remote-controlled `alice` session, all four fixes in
 `docs/fleet-hardening-plan.md` were implemented directly in the source (in-session edits, which
 is why the worker `lastUsedAt` stamps did not advance — direct edits don't go through the fleet
 `markUsed` path). The gates were then run on the machine.
