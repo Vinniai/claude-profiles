@@ -31,6 +31,7 @@ export enum ErrorCode {
   ALL_PROFILES_EXHAUSTED = 'ALL_PROFILES_EXHAUSTED',
   CLAUDE_NOT_FOUND = 'CLAUDE_NOT_FOUND',
   NO_CHAIN = 'NO_CHAIN',
+  PROFILE_NOT_FOUND = 'PROFILE_NOT_FOUND',
 }
 
 export interface ConfigPaths {

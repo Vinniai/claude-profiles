@@ -424,6 +424,142 @@ claude-profiles handoff disable        # remove them
 claude-profiles handoff clear [chain]  # drop stored context (one chain, or all)
 ```
 
+## Fleet: one orchestrator, many accounts
+
+Where a chain uses your accounts **one at a time** (failover), the **Fleet** lets one
+orchestrator session use them **all at once** — delegating sub-tasks to your other
+accounts and collecting structured results. It's an MCP server: wire it into a normal
+Claude session and that session gets `delegate`, `delegate_parallel`, and `fleet_status`
+tools that run work on your *other* profiles as headless workers.
+
+Each delegated task runs as a `claude -p --output-format json` child pinned to a profile
+via `CLAUDE_CONFIG_DIR`, so it bills against **that account's Max subscription (OAuth)** —
+not per-token API. To keep it on the subscription, every worker spawn **scrubs**
+`ANTHROPIC_API_KEY` / `ANTHROPIC_AUTH_TOKEN` (either would silently override the OAuth
+login) and **never** passes `--bare` (bare mode skips OAuth and demands an API key).
+
+> **Billing note.** As of 2026-06-15, `-p`/SDK usage draws from a separate per-account
+> **Agent SDK credit** ($20 Pro / $100 Max-5× / $200 Max-20× per month), distinct from the
+> interactive 5h/7d pool. Each account has its own credit, so fanning out across N accounts
+> multiplies your headless budget. `fleet_status` reports each account's cached usage so you
+> can pick a healthy target.
+
+```bash
+# Add the fleet to an orchestrator session as an MCP server (stdio transport):
+claude mcp add fleet -- claude-profiles fleet --no-http
+```
+
+Inside that session, the orchestrator can now:
+
+- **`delegate(profile, prompt, …)`** — run one prompt on another account; returns the
+  worker's `text`, its `sessionId` (pass back as `resume` to continue that worker with its
+  context intact), and `cost`.
+- **`delegate_parallel(tasks[])`** — fan several `{profile, prompt, model?, resume?}` tasks
+  out across accounts concurrently; one result per task, in input order.
+- **`fleet_status()`** — health, plan, last-used, and cached usage per profile.
+
+So one remote session on your main subscription can coordinate two (or more) of your other
+accounts — e.g. delegate a refactor to `lockie` and a doc pass to `trev` in parallel, then
+synthesize both results — all on subscription OAuth.
+
+### CLI (handy for testing)
+
+```bash
+claude-profiles fleet status                         # health of every profile
+claude-profiles fleet run lockie "summarize ./README.md"   # one-shot dispatch
+claude-profiles fleet run lockie "and the next steps?" --resume <sessionId>   # continue
+claude-profiles fleet parallel '[{"profile":"lockie","prompt":"a"},{"profile":"trev","prompt":"b"}]'
+```
+
+The server also exposes a localhost-only HTTP face (default `:8798`, disable with
+`--no-http`) mirroring the tools — `POST /delegate`, `POST /delegate-parallel`, `GET /status` —
+so a remote driver can dispatch without an MCP session.
+
+**Safety:** workers run concurrently, but state effects (cooldowns, last-used, usage) are
+applied **sequentially after** each batch settles, so parallel workers never race on
+`state.json`. A rate-limited worker records its cooldown just like the failover path, so a
+later `delegate` to that account knows to wait.
+
+### Coordinator — steer the fleet from your phone (official Remote Control)
+
+The fleet tools assume the orchestrator is an interactive Claude session you're sitting in.
+To steer one **from a device** — claude.ai/code or the Claude mobile app — use the
+**coordinator**, which launches a **lead** profile (e.g. `josh`) as an official Claude Code
+[Remote Control](https://code.claude.com/docs/en/remote-control) session with the fleet MCP
+attached. The lead can then `delegate` / `delegate_parallel` to your other accounts and
+synthesize the results, all driven by prompts you type on the device.
+
+> **It runs locally.** Remote Control is *not* the cloud. claude.ai/code is a remote screen
+> into the `claude` process on your machine — prompts execute against your local filesystem
+> and your local fleet MCP. (This is distinct from "Claude Code on the web", which *is*
+> cloud.) Requires `claude` v2.1.51+, claude.ai OAuth (API keys are rejected), and
+> `ANTHROPIC_API_KEY`/`ANTHROPIC_AUTH_TOKEN` **unset**.
+
+```bash
+# Server mode — drive entirely from a device. Prints the env URL when ready.
+claude-profiles fleet coordinator --lead josh --server --name "Fleet coordinator (josh)"
+# → open https://claude.ai/code?environment=env_… on your phone or browser
+```
+
+In server mode the fleet MCP is registered into the lead's config automatically
+(`claude mcp add fleet --scope user`, idempotent). Drop `--server` to run an **interactive**
+coordinator in your terminal that's *also* reachable from a device; that path wires the MCP
+in via a temp `--mcp-config`. For a dev install where `claude-profiles` isn't on `PATH`, set
+`CLAUDE_PROFILES_BIN` (e.g. `node /path/to/dist/index.js`) so the lead can spawn the fleet
+MCP server.
+
+Once connected, steer it like any session — e.g. type on your phone:
+
+> Use `delegate_parallel` to have `lockie` audit `./api` for auth bugs and `mini-trev`
+> review `./web` for a11y issues, then merge both into one prioritized list.
+
+For a full, documentable QA protocol — multi-agent fan-out, **plan mode**, threading,
+resilience, plus an operator-side proof monitor and a scoring rubric — see
+[docs/fleet-coordinator-acceptance-test.md](docs/fleet-coordinator-acceptance-test.md).
+
+### Headless HTTP control (no device)
+
+For a **headless, locally-driven** orchestrator — kick one off, then feed it prompts over
+localhost HTTP — use `fleet http-control`. It runs a lead profile as a `claude -p` session
+with the fleet MCP wired in; its session is threaded via `--resume`, so context carries
+across calls.
+
+```bash
+# 1. Kick off the orchestrator on the josh profile (long-running; localhost :8798)
+claude-profiles fleet http-control --lead josh
+```
+
+```bash
+# 2. Drive it — POST the prompt that tells josh to control the rest:
+curl -s localhost:8798/control -d '{
+  "prompt": "Use delegate_parallel to have lockie audit ./api for auth bugs and mini-trev review ./web for a11y issues, then merge both into one prioritized list."
+}'
+```
+
+```jsonc
+// josh plans, calls delegate_parallel against lockie + mini-trev, and returns:
+{
+  "ok": true,
+  "lead": "josh",
+  "text": "Merged findings:\n1. …",
+  "orchestratorSession": "148143a4-…",   // reused on the next /control call
+  "costUsd": 0.30,
+  "numTurns": 3
+}
+```
+
+```bash
+# 3. Keep the conversation going — same session, context intact:
+curl -s localhost:8798/control -d '{"prompt":"Now have lockie fix the top item and report the diff."}'
+
+# Health (lead + every account) / start a fresh thread:
+curl -s localhost:8798/status
+curl -s -XPOST localhost:8798/reset
+```
+
+The lead authenticates with its own subscription OAuth (API-key vars scrubbed), and so does
+every account it delegates to.
+
 ## Profiles
 
 Profiles let you run multiple Claude Code configurations side by side — each with its own authentication.
