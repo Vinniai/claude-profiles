@@ -204,6 +204,29 @@ describe('runWithFallback', () => {
     expect(result.exitCode).toBe(3);
   });
 
+  it('replays piped stdin to each failover candidate', async () => {
+    const seen: Array<string | undefined> = [];
+    const spawnImpl = vi.fn(
+      async (configDir: string, _args: string[], stdin?: Buffer) => {
+        seen.push(stdin?.toString());
+        if (configDir === '/c/a') {
+          return { exitCode: 1, stdout: '', stderr: 'usage limit reached' };
+        }
+        return { exitCode: 0, stdout: 'ok', stderr: '' };
+      }
+    );
+    const result = await runWithFallback({
+      candidates: [candidate('a'), candidate('b')],
+      claudeArgs: ['-p'],
+      spawnImpl,
+      // The first worker drains stdin; the failover worker must get it too.
+      stdin: Buffer.from('the piped prompt'),
+      now: () => NOW,
+    });
+    expect(result.succeeded).toBe('b');
+    expect(seen).toEqual(['the piped prompt', 'the piped prompt']);
+  });
+
   it('throws ALL_PROFILES_EXHAUSTED when every candidate is rate limited', async () => {
     const spawnImpl = vi.fn(async () => ({
       exitCode: 1,
@@ -320,6 +343,35 @@ describe('runInteractiveWithFailover', () => {
     expect(launched).toEqual(['a', 'b']);
     expect(result.lastProfile).toBe('b');
     expect(moves).toEqual([['a', 'b']]);
+  });
+
+  it('ignores a proactive directive that points at an unhealthy target', async () => {
+    const launched: string[] = [];
+    const moves: Array<[string, string]> = [];
+    // The Stop hook proposes switching to "b", but "b" is cooled-down/needs-auth.
+    let pending: { to: string } | undefined = { to: 'b' };
+    const result = await runInteractiveWithFailover({
+      candidates: [candidate('a'), candidate('b', false)], // b unhealthy
+      claudeArgs: [],
+      chain: 'default',
+      spawnInteractive: async (c) => {
+        launched.push(c.name);
+        return 0;
+      },
+      consumeSwitch: async () => {
+        const d = pending;
+        pending = undefined;
+        return d;
+      },
+      onRelaunch: (from, to) => moves.push([from, to]),
+      isCooledDown: async () => false, // a stayed healthy → clean exit
+      now: () => NOW,
+    });
+    // The directive is refused (don't relaunch onto an account that will fail);
+    // a exited clean so we stop on a.
+    expect(launched).toEqual(['a']);
+    expect(result.lastProfile).toBe('a');
+    expect(moves).toEqual([]);
   });
 
   it('allows a directive to revisit an already-run account (schedule ping-pong)', async () => {

@@ -112,9 +112,37 @@ export function parseResetTime(text: string, now: Date): Date | null {
 }
 
 /**
- * When `claude --output-format json` is used, stdout is a single JSON object.
- * Pull the human message + error flag out of it so we classify on the real
- * error text rather than the JSON punctuation.
+ * Pull the final JSON value out of `claude`'s stdout, handling all three output
+ * shapes: a single `--output-format json` object, a JSON array, and
+ * `--output-format stream-json` (NDJSON — one object per line, the last line
+ * being the result envelope). Returns the last meaningful value, or null.
+ */
+function parseLastJsonValue(trimmed: string): unknown {
+  // Single JSON value (object or array) — the common --output-format json case.
+  try {
+    const parsed = JSON.parse(trimmed);
+    return Array.isArray(parsed) ? parsed[parsed.length - 1] : parsed;
+  } catch {
+    // Not one value — fall through to NDJSON (stream-json) line scanning.
+  }
+  let last: unknown = null;
+  for (const line of trimmed.split('\n')) {
+    const t = line.trim();
+    if (!t.startsWith('{') && !t.startsWith('[')) continue;
+    try {
+      const v = JSON.parse(t);
+      last = Array.isArray(v) ? v[v.length - 1] : v;
+    } catch {
+      // Skip a partial / non-JSON line; keep the last one that did parse.
+    }
+  }
+  return last;
+}
+
+/**
+ * When `claude --output-format json|stream-json` is used, pull the human message
+ * + error flag out of the final envelope so we classify on the real error text
+ * rather than the JSON punctuation.
  */
 function extractJsonSignal(stdout: string): {
   isError: boolean;
@@ -123,21 +151,24 @@ function extractJsonSignal(stdout: string): {
   const trimmed = stdout.trim();
   if (!trimmed.startsWith('{') && !trimmed.startsWith('[')) return null;
   try {
-    const parsed = JSON.parse(trimmed);
-    const obj = Array.isArray(parsed) ? parsed[parsed.length - 1] : parsed;
+    const obj = parseLastJsonValue(trimmed) as Record<string, unknown> | null;
     if (!obj || typeof obj !== 'object') return null;
     const isError =
       obj.is_error === true ||
       obj.subtype === 'error' ||
       obj.type === 'error' ||
       typeof obj.error !== 'undefined';
+    const errObj =
+      obj.error && typeof obj.error === 'object'
+        ? (obj.error as Record<string, unknown>)
+        : undefined;
     const message = [
       obj.result,
       obj.message,
-      typeof obj.error === 'string' ? obj.error : obj.error?.message,
-      obj.error?.type,
+      typeof obj.error === 'string' ? obj.error : errObj?.message,
+      errObj?.type,
     ]
-      .filter((v) => typeof v === 'string')
+      .filter((v): v is string => typeof v === 'string')
       .join(' ');
     return { isError, message };
   } catch {

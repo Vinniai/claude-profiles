@@ -53,21 +53,31 @@ export interface SpawnResult {
 /** Spawn factory injected for tests; defaults to the real capturing spawn. */
 export type CaptureSpawn = (
   configDir: string,
-  args: string[]
+  args: string[],
+  /** Buffered stdin to write to the child (replayed across failovers). */
+  stdin?: Buffer
 ) => Promise<SpawnResult>;
 
 /**
- * Headless spawn: inherit stdin (so piped prompts work), capture stdout/stderr
- * so we can classify the result and only surface output on success.
+ * Headless spawn: capture stdout/stderr so we can classify the result and only
+ * surface output on success. When `stdin` is provided (a piped prompt buffered
+ * once by the caller) it's written to the child so the SAME input survives a
+ * failover to the next account; otherwise stdin is inherited so an interactive
+ * pipe / TTY still works.
  */
-export const captureSpawn: CaptureSpawn = (configDir, args) =>
+export const captureSpawn: CaptureSpawn = (configDir, args, stdin) =>
   new Promise((resolve, reject) => {
     const child = spawn(claudeBin(), args, {
       env: { ...process.env, CLAUDE_CONFIG_DIR: configDir },
-      stdio: ['inherit', 'pipe', 'pipe'],
+      stdio: [stdin !== undefined ? 'pipe' : 'inherit', 'pipe', 'pipe'],
     });
     let stdout = '';
     let stderr = '';
+    if (stdin !== undefined && child.stdin) {
+      child.stdin.on('error', () => {}); // child may close stdin early; ignore EPIPE
+      child.stdin.write(stdin);
+      child.stdin.end();
+    }
     child.stdout?.on('data', (d) => (stdout += d.toString()));
     child.stderr?.on('data', (d) => (stderr += d.toString()));
     child.on('error', (err: NodeJS.ErrnoException) => {
@@ -346,6 +356,12 @@ export interface RunWithFallbackOptions {
   candidates: Candidate[];
   claudeArgs: string[];
   spawnImpl?: CaptureSpawn;
+  /**
+   * Piped stdin buffered once by the caller. Replayed to every candidate so a
+   * `echo … | claude-profiles run -p` prompt survives a failover (the first
+   * worker would otherwise drain the live stream and leave the next with none).
+   */
+  stdin?: Buffer | null;
   onAttempt?: (name: string, index: number, total: number) => void;
   onFallback?: (
     name: string,
@@ -376,6 +392,7 @@ export async function runWithFallback(
     candidates,
     claudeArgs,
     spawnImpl = captureSpawn,
+    stdin,
     onAttempt,
     onFallback,
     now = () => new Date(),
@@ -395,7 +412,11 @@ export async function runWithFallback(
     const c = candidates[i];
     onAttempt?.(c.name, i, candidates.length);
 
-    const result = await spawnImpl(c.profile.configDir, claudeArgs);
+    const result = await spawnImpl(
+      c.profile.configDir,
+      claudeArgs,
+      stdin ?? undefined
+    );
     const outcome = classifyOutcome(result, now());
     attempts.push({ name: c.name, outcome });
 
@@ -586,9 +607,12 @@ export async function runInteractiveWithFailover(
     //    windows), which is allowed.
     if (chain) {
       const directive = await consumeSwitch(chain);
+      // Only honour a directive that targets a *healthy* account — relaunching
+      // onto a cooled-down / needs-auth profile would just fail immediately.
+      // An unhealthy (or unknown) target falls through to the normal failover path.
       const next: Candidate | undefined =
         directive && directive.to !== current.name
-          ? candidates.find((c) => c.name === directive.to)
+          ? candidates.find((c) => c.name === directive.to && c.healthy)
           : undefined;
       if (directive && next) {
         onRelaunch?.(
