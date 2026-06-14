@@ -14,3 +14,4 @@ export { statuslineCommand } from './statusline.js';
 export { cutoverCommand } from './cutover.js';
 export { paceCommand } from './pace.js';
 export { channelCommand } from './channel.js';
+export { fleetCommand } from './fleet.js';
