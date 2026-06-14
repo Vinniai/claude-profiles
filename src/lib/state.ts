@@ -1,3 +1,4 @@
+import crypto from 'crypto';
 import fs from 'fs-extra';
 import path from 'path';
 import { getClaudeProfilesDir } from './paths.js';
@@ -38,7 +39,9 @@ export async function loadState(): Promise<RuntimeStateFile> {
 async function saveState(state: RuntimeStateFile): Promise<void> {
   const statePath = getStatePath();
   await fs.ensureDir(path.dirname(statePath));
-  const tmpPath = `${statePath}.${process.pid}.tmp`;
+  // Unique per writer (pid + random token) so two concurrent in-process writers
+  // can't collide on the same temp file and rename a half-written one over state.
+  const tmpPath = `${statePath}.${process.pid}.${crypto.randomBytes(6).toString('hex')}.tmp`;
   await fs.writeJson(tmpPath, state, { spaces: 2 });
   await fs.rename(tmpPath, statePath);
 }
