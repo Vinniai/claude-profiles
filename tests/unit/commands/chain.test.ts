@@ -112,6 +112,16 @@ describe('chain management', () => {
       });
     });
 
+    it('refuses to empty a chain by removing its last profile', async () => {
+      await createChain('solo', ['a']);
+      // Removing the only member would leave an empty (useless) chain — guard it.
+      await expect(removeFromChain('solo', 'a')).rejects.toMatchObject({
+        code: 'NO_CHAIN',
+      });
+      // The chain is left intact, not silently emptied.
+      expect(await getChain('solo')).toEqual(['a']);
+    });
+
     it('deletes a chain', async () => {
       await createChain('default', ['a', 'b']);
       await deleteChain('default');

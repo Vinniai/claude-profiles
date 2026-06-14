@@ -297,7 +297,7 @@ export const runCommand = new Command('run')
       });
 
       await flushRoutingLog();
-      process.exit(result.exitCode);
+      process.exit(result.exitCode ?? 1);
     }
 
     // Headless: capture + auto-retry across the chain.
@@ -353,7 +353,7 @@ export const runCommand = new Command('run')
       await markUsed(result.succeeded);
       logger.dim(`(served by profile "${result.succeeded}")`);
       await flushRoutingLog();
-      process.exit(result.exitCode);
+      process.exit(result.exitCode ?? 1);
     }
 
     // Non-failover failure surfaced from the last attempt.
