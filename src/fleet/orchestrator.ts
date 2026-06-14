@@ -12,6 +12,7 @@ import {
   type WorkerResult,
 } from '../lib/fleet.js';
 import { ClaudeProfilesError, ErrorCode } from '../types/index.js';
+import { loadHandoff, updateHandoff } from '../lib/handoff.js';
 
 /**
  * Remote-control **orchestrator** — a single lead profile (e.g. `alice`) run as a
@@ -116,10 +117,25 @@ export interface CoordinatorOptions {
   server?: boolean;
   /** Permission mode for the session (e.g. acceptEdits, dontAsk). */
   permissionMode?: string;
+  /**
+   * Start a clean conversation instead of auto-resuming this coordinator's last
+   * session. By default a relaunch of the same `--name` picks up where it left
+   * off (see {@link stageCoordinatorResume}).
+   */
+  fresh?: boolean;
   /** Extra raw args forwarded to `claude`. */
   extraArgs?: string[];
   /** Injected spawn for tests. */
   spawnImpl?: typeof spawn;
+}
+
+/**
+ * The chain/handoff key for a coordinator. Stable across relaunches of the same
+ * `--name`, so a reconnect continues the same conversation thread. Falls back to
+ * the lead profile when unnamed.
+ */
+export function coordinatorChain(opts: { name?: string; lead: string }): string {
+  return opts.name ?? opts.lead;
 }
 
 /** Build the `claude` argv for the coordinator. Pure, for testing. */
@@ -153,9 +169,34 @@ export function coordinatorEnv(
   base: NodeJS.ProcessEnv = process.env,
 ): NodeJS.ProcessEnv {
   const env = workerEnv(configDir, base);
-  env.CLAUDE_PROFILES_CHAIN = opts.name ?? opts.lead;
+  const chain = coordinatorChain(opts);
+  env.CLAUDE_PROFILES_CHAIN = chain;
   env.CLAUDE_PROFILES_RUN = '1';
+  // Stable, legible thread id so the handoff record keeps one identity across
+  // relaunches of the same coordinator name (the Stop hook honours this over a
+  // freshly-generated id), which is what lets a reconnect resume its own thread.
+  env.CLAUDE_PROFILES_THREAD = `coord:${chain}`;
   return env;
+}
+
+/**
+ * Stage a one-shot resume so a relaunched/reconnected coordinator picks up its
+ * own last conversation. Server-mode Remote Control has no `--resume`/`--continue`
+ * flag, so instead we set `pendingResume` on the chain's handoff record; the
+ * SessionStart hook then injects the prior summary as context exactly once.
+ *
+ * No-ops (returns `willResume:false`) when `--fresh` is set or there is no prior
+ * summary to restore — e.g. the very first launch of a name.
+ */
+export async function stageCoordinatorResume(
+  opts: CoordinatorOptions,
+): Promise<{ willResume: boolean; chain: string }> {
+  const chain = coordinatorChain(opts);
+  if (opts.fresh) return { willResume: false, chain };
+  const record = await loadHandoff(chain);
+  if (!record?.summary) return { willResume: false, chain };
+  await updateHandoff(chain, { pendingResume: true });
+  return { willResume: true, chain };
 }
 
 /**
@@ -199,6 +240,13 @@ export async function launchCoordinator(opts: CoordinatorOptions): Promise<numbe
     tmpDir = mkdtempSync(path.join(os.tmpdir(), 'claude-profiles-coord-'));
     mcpConfigPath = path.join(tmpDir, 'fleet-mcp.json');
     writeFileSync(mcpConfigPath, mcpConfigJson(), 'utf-8');
+  }
+
+  const resume = await stageCoordinatorResume(opts);
+  if (resume.willResume) {
+    log(`resuming the "${resume.chain}" coordinator's previous session — its context is restored on start (pass --fresh to start clean)`);
+  } else if (opts.fresh) {
+    log(`starting a fresh "${resume.chain}" coordinator conversation (--fresh)`);
   }
 
   const args = coordinatorArgs(opts, mcpConfigPath);

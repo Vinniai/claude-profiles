@@ -83,13 +83,15 @@ fleetCommand
   .option('-n, --name <name>', 'Session title shown at claude.ai/code')
   .option('--server', 'Use `claude remote-control` server mode (drive entirely from a device)')
   .option('--permission-mode <mode>', 'Permission mode (acceptEdits, dontAsk, bypassPermissions, …)')
+  .option('--fresh', 'Start a clean conversation instead of resuming this name\'s last session')
   .action(
-    async (opts: { lead: string; name?: string; server?: boolean; permissionMode?: string }) => {
+    async (opts: { lead: string; name?: string; server?: boolean; permissionMode?: string; fresh?: boolean }) => {
       const code = await launchCoordinator({
         lead: opts.lead,
         name: opts.name ?? `Fleet coordinator (${opts.lead})`,
         server: opts.server,
         permissionMode: opts.permissionMode,
+        fresh: opts.fresh,
       });
       process.exit(code);
     },

@@ -25,6 +25,12 @@ vi.mock('../../../src/lib/profiles.js', () => ({
   })),
 }));
 
+// Stub the handoff store so stageCoordinatorResume's load/update never touch disk.
+vi.mock('../../../src/lib/handoff.js', () => ({
+  loadHandoff: vi.fn(async () => null),
+  updateHandoff: vi.fn(async () => ({})),
+}));
+
 import { spawn } from 'child_process';
 import {
   workerArgs,
@@ -45,9 +51,12 @@ import {
   remoteControlReadme,
   coordinatorArgs,
   coordinatorEnv,
+  coordinatorChain,
+  stageCoordinatorResume,
   selfInvocation,
 } from '../../../src/fleet/orchestrator.js';
 import { setProfileCooldown, markNeedsAuth, markUsed } from '../../../src/lib/state.js';
+import { loadHandoff, updateHandoff } from '../../../src/lib/handoff.js';
 
 const NOW = new Date('2026-06-14T12:00:00.000Z');
 
@@ -140,16 +149,23 @@ describe('orchestrator helpers', () => {
     expect(args).toEqual(['remote-control', '--name', 'Coord']);
     expect(args).not.toContain('--mcp-config');
   });
-  it('coordinatorEnv sets CLAUDE_PROFILES_CHAIN so hooks fire (name, else lead)', () => {
+  it('coordinatorChain keys on the name, falling back to the lead', () => {
+    expect(coordinatorChain({ lead: 'josh', name: 'session' })).toBe('session');
+    expect(coordinatorChain({ lead: 'josh' })).toBe('josh');
+  });
+  it('coordinatorEnv sets CHAIN + a stable THREAD so hooks fire (name, else lead)', () => {
     const base = { ANTHROPIC_API_KEY: 'sk-x', PATH: '/bin' };
     const named = coordinatorEnv({ lead: 'josh', name: 'session' }, '/c/josh', base);
     expect(named.CLAUDE_CONFIG_DIR).toBe('/c/josh');
     expect(named.ANTHROPIC_API_KEY).toBeUndefined();
     expect(named.CLAUDE_PROFILES_CHAIN).toBe('session');
     expect(named.CLAUDE_PROFILES_RUN).toBe('1');
+    // Stable across relaunches so the handoff keeps one thread identity.
+    expect(named.CLAUDE_PROFILES_THREAD).toBe('coord:session');
 
     const unnamed = coordinatorEnv({ lead: 'josh' }, '/c/josh', base);
     expect(unnamed.CLAUDE_PROFILES_CHAIN).toBe('josh');
+    expect(unnamed.CLAUDE_PROFILES_THREAD).toBe('coord:josh');
   });
   it('remoteControlReadme shows the lead, port, and control endpoints', () => {
     const rm = remoteControlReadme('josh', 8798);
@@ -157,6 +173,34 @@ describe('orchestrator helpers', () => {
     expect(rm).toContain('127.0.0.1:8798/control');
     expect(rm).toContain('/status');
     expect(rm).toContain('/reset');
+  });
+});
+
+describe('stageCoordinatorResume', () => {
+  it('stages a one-shot resume when a prior summary exists', async () => {
+    vi.mocked(loadHandoff).mockResolvedValueOnce({
+      chain: 'session',
+      threadId: 'coord:session',
+      summary: 'User: build it\nAssistant: on it',
+      updatedAt: NOW.toISOString(),
+    });
+    const r = await stageCoordinatorResume({ lead: 'josh', name: 'session' });
+    expect(r).toEqual({ willResume: true, chain: 'session' });
+    expect(updateHandoff).toHaveBeenCalledWith('session', { pendingResume: true });
+  });
+
+  it('does not resume on the first launch (no prior summary)', async () => {
+    vi.mocked(loadHandoff).mockResolvedValueOnce(null);
+    const r = await stageCoordinatorResume({ lead: 'josh', name: 'session' });
+    expect(r).toEqual({ willResume: false, chain: 'session' });
+    expect(updateHandoff).not.toHaveBeenCalled();
+  });
+
+  it('skips resume (and never loads) when --fresh is set', async () => {
+    const r = await stageCoordinatorResume({ lead: 'josh', name: 'session', fresh: true });
+    expect(r).toEqual({ willResume: false, chain: 'session' });
+    expect(loadHandoff).not.toHaveBeenCalled();
+    expect(updateHandoff).not.toHaveBeenCalled();
   });
 });
 

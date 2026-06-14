@@ -121,21 +121,26 @@
   <div class="wrap">
     <h2>What shipped</h2>
     <div class="h2sub">Three improvements, built in parallel</div>
-    <div class="grid">
-      <div class="card">
-        <span class="n">A · usage</span>
+    <div class=”grid”>
+      <div class=”card”>
+        <span class=”n”>A · usage</span>
         <h3>Budget tracking</h3>
         <p>Every account now carries a <b>session</b> (~5h rolling) and <b>weekly</b> budget — percent used and reset time. They self-populate from Claude’s own output, or you set them by hand.</p>
       </div>
-      <div class="card">
-        <span class="n">B · strategy</span>
+      <div class=”card”>
+        <span class=”n”>B · strategy</span>
         <h3>Strategic router</h3>
         <p>Five pluggable strategies plus <b>eligibility policies</b> — “only spend this account while it has ≥ 50% weekly left”, “drain a session that resets in 10 minutes”, round-robin to spread load.</p>
       </div>
-      <div class="card">
-        <span class="n">C · render</span>
+      <div class=”card”>
+        <span class=”n”>C · render</span>
         <h3>Transition UI</h3>
-        <p>A boxed <b>hand-off card</b> on every failover showing <span style="color:var(--accent)">atlas ▸▸▸ orion</span>, the reason, and both accounts’ budget meters — plus a rich <code>chain status</code> dashboard.</p>
+        <p>A boxed <b>hand-off card</b> on every failover showing <span style=”color:var(--accent)”>atlas ▸▸▸ orion</span>, the reason, and both accounts’ budget meters — plus a rich <code>chain status</code> dashboard.</p>
+      </div>
+      <div class=”card”>
+        <span class=”n”>D · hook</span>
+        <h3>Budget guardrail</h3>
+        <p>A per-turn <code>UserPromptSubmit</code> hook that silently watches the active account’s cap. When you’re <b>near or over</b> the limit it injects a short note — so both the model and you know a hand-off is coming before it actually fires.</p>
       </div>
     </div>
   </div>
@@ -307,6 +312,56 @@ pong
   </div>
 </section>
 
+<!-- BUDGET GUARDRAIL -->
+<section id="budget-guardrail">
+  <div class="wrap">
+    <h2>Budget guardrail</h2>
+    <div class="h2sub">Per-turn cap awareness — before the hand-off fires</div>
+    <p class="note">A <code>UserPromptSubmit</code> hook runs at the start of every turn and checks the active account's usage against its effective session cap (including any cutover <code>push</code> override). When headroom is tight it injects a short note as <code>additionalContext</code> — visible to both the model and you in the turn — so neither side is surprised when the auto-switch arrives.</p>
+
+    <div class="split">
+      <div class="panel">
+        <h4>what you see in the turn</h4>
+        <div class="term" style="margin:0">
+          <div class="bar"><i class="d-r"></i><i class="d-y"></i><i class="d-g"></i><span class="title">additionalContext injected by the hook</span></div>
+<pre><span class="dm">— near cap —</span>
+<span class="y">⚠</span>  you're at <span class="y">92%</span> of <span class="b">alice</span>'s session cap
+   a switch to <span class="c">bob</span> is coming
+
+<span class="dm">— over cap —</span>
+<span class="r">⚠</span>  <span class="b">alice</span> is over the session cap
+   handing off to <span class="c">carol</span> on the next turn</pre>
+        </div>
+      </div>
+      <div class="panel">
+        <h4>behaviour rules</h4>
+        <div class="step"><div class="num">1</div><div class="t"><b>Read-only</b> <span>— the hook never changes which account is active; it only annotates the turn. Routing decisions belong to the strategic router.</span></div></div>
+        <div class="step"><div class="num">2</div><div class="t"><b>Silent by default</b> <span>— no note is injected when there's comfortable headroom or when no cap is configured for the account.</span></div></div>
+        <div class="step"><div class="num">3</div><div class="t"><b>Chain-only</b> <span>— the hook no-ops unless the session was launched through a chain (keys off <code style="color:var(--accent2)">CLAUDE_PROFILES_CHAIN</code>). Standalone profile use is unaffected.</span></div></div>
+        <div class="step"><div class="num">4</div><div class="t"><b>Best-effort</b> <span>— if budget data isn't available the hook skips silently, so there's never a hard failure on this path.</span></div></div>
+        <p style="margin:6px 0 0;color:var(--faint);font-size:13px">Complements the proactive turn-boundary auto-switch: the switch still happens on its own — the guardrail just gives you advance notice.</p>
+      </div>
+    </div>
+
+    <div class="term" style="margin-top:18px">
+      <div class="bar"><i class="d-r"></i><i class="d-y"></i><i class="d-g"></i><span class="title">full turn flow with guardrail active</span></div>
+<pre><span class="prompt">$</span> claude --chain default
+
+<span class="dm">turn 1 — alice at 55%  → no note, comfortable headroom</span>
+<span class="dm">turn 2 — alice at 88%  → no note, below near-cap threshold</span>
+<span class="dm">turn 3 — alice at 92%</span>
+  <span class="y">⚠ you're at 92% of alice's session cap — a switch to bob is coming</span>
+<span class="dm">turn 4 — alice at 101% (over)</span>
+  <span class="r">⚠ alice is over the session cap — handing off to bob on the next turn</span>
+  <span class="dm">╭───────────────────────────────────────────────────────────────────╮</span>
+  <span class="dm">│</span>   <span class="o">■</span> <span class="bd">alice</span>  <span class="o">▸▸▸</span>  <span class="c">bob</span>                                               <span class="dm">│</span>
+  <span class="dm">│</span>   reason: <span class="dm">session cap reached</span>                                     <span class="dm">│</span>
+  <span class="dm">╰───────────────────────────────────────────────────────────────────╯</span>
+<span class="dm">turn 5 — bob at 10%    → no note, comfortable headroom</span></pre>
+    </div>
+  </div>
+</section>
+
 <!-- COMMANDS -->
 <section>
   <div class="wrap">
@@ -321,6 +376,7 @@ pong
         <tr><td><code>usage show</code></td><td>Dashboard of session / weekly budgets per profile</td></tr>
         <tr><td><code>usage set &lt;profile&gt; …</code></td><td>Manual budgets: <code>--session</code> <code>--weekly</code> (%, used) · <code>--session-reset 5h</code> <code>--weekly-reset 3d</code></td></tr>
         <tr><td><code>usage clear &lt;profile&gt;</code></td><td>Drop a profile’s stored budget</td></tr>
+        <tr><td><code>UserPromptSubmit</code> hook</td><td>Per-turn guardrail — injects a near/over-cap note into <code>additionalContext</code>; silent when headroom is comfortable or no cap is set; no-ops outside a chain</td></tr>
       </tbody>
     </table>
     <p class="note" style="margin-top:18px">All of this is additive and off by default — with no strategy or policy set, routing behaves exactly as before (<span class="strat">priority</span> order). The budgets are advisory: when a figure is unknown, the gate passes and the strategy degrades gracefully to chain order.</p>

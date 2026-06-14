@@ -33,8 +33,9 @@ artifacts, so a passing run is positive evidence the work happened on your hardw
 | **Threading** | a follow-up reuses worker context (`resume`) | coordinator session survives across prompts |
 | **Resilience** | a rate-limited/cooled account is skipped, not fatal | cooldown recorded in `state.json` |
 | **Billing hygiene** | workers run on subscription OAuth | `ANTHROPIC_API_KEY` scrubbed; no `--bare` |
+| **Auto-resume** | relaunch of same `--name` recalls prior context; `--fresh` suppresses | `pendingResume` flag transitions correctly (staged → consumed → suppressed) |
 
-Score = phases passed / phases attempted. A clean run is **8/8**. Anything that fails
+Score = phases passed / phases attempted. A clean run is **9/9**. Anything that fails
 should fail *loud* (visible error on the device), never silently.
 
 ---
@@ -194,6 +195,133 @@ claude-profiles chain reset            # clear first if needed
 **Pass:** `bob` returns OK; `carol` is reported as skipped/cooling — the call does
 **not** hard-fail the whole batch. **Proof:** `state.json` shows `carol` with a
 `cooldownUntil`/`needsAuth`, and a later delegate respects it.
+
+---
+
+## Phase 7 — Coordinator auto-resume
+
+Verifies that killing and relaunching a `--name`-keyed coordinator restores the prior
+session context automatically — without `--resume` (which server mode doesn't expose) — and
+that `--fresh` opts out of the recall.
+
+### 7a — First launch (nothing to resume)
+
+**Operator:**
+```bash
+claude-profiles fleet coordinator --lead alice --name orchestrator --server \
+  | tee /tmp/coord-orchestrator.log
+```
+
+**Pass:** starts clean (no "resuming" log line); the handoff store for this name does not
+yet exist (or is empty).
+
+---
+
+### 7b — Plant a memorable fact, let the model reply
+
+**Device prompt:**
+> The codeword is **TANGERINE**. Your pending task is to draft a fleet-status summary once
+> carol is back online. Acknowledge both.
+
+**Pass:** the coordinator echoes back the codeword and the pending task, confirming they
+are in the active transcript.
+
+**Operator — verify the Stop-hook snapshot landed:**
+```bash
+cat ~/.claude/.claude-profiles/handoff/orchestrator/current.json | jq '{summary: .summary, pendingResume: .pendingResume}'
+```
+
+**Pass criteria:**
+- `.summary` is a non-empty string (the hook captured the conversation).
+- `.pendingResume` is `null` or absent (the snapshot is staged, not yet consumed).
+
+---
+
+### 7c — Kill and relaunch with the same `--name`
+
+**Operator:**
+```bash
+pkill -f "claude remote-control"        # kill the coordinator
+sleep 2
+
+# Relaunch — same name, no --fresh
+claude-profiles fleet coordinator --lead alice --name orchestrator --server \
+  | tee /tmp/coord-orchestrator-2.log
+```
+
+**Pass:** the launch log contains the line:
+
+```
+resuming the "orchestrator" coordinator's previous session…
+```
+
+**Operator — verify the one-shot flag was staged:**
+```bash
+cat ~/.claude/.claude-profiles/handoff/orchestrator/current.json | jq '.pendingResume'
+# expect: true
+```
+
+---
+
+### 7d — Confirm recall without re-explaining
+
+Open the new session URL on the device and ask, without providing any context:
+
+**Device prompt:**
+> What was the codeword I gave you, and what task was pending?
+
+**Pass:** the coordinator correctly recalls **TANGERINE** and the fleet-status-summary task.
+
+**Operator — verify the flag was consumed (one-shot):**
+```bash
+cat ~/.claude/.claude-profiles/handoff/orchestrator/current.json | jq '.pendingResume'
+# expect: false
+```
+
+**Pass criteria:** recall correct AND `pendingResume` is now `false`.
+
+---
+
+### 7e — Negative control: `--fresh` disables recall
+
+**Operator:**
+```bash
+pkill -f "claude remote-control"
+
+# Relaunch with --fresh — handoff file stays on disk but resume is suppressed
+claude-profiles fleet coordinator --lead alice --name orchestrator --fresh --server \
+  | tee /tmp/coord-orchestrator-3.log
+```
+
+**Pass:** no "resuming" log line appears.
+
+**Operator — confirm the flag was NOT staged:**
+```bash
+cat ~/.claude/.claude-profiles/handoff/orchestrator/current.json | jq '.pendingResume'
+# expect: false  (the snapshot file still exists, but --fresh left pendingResume alone)
+```
+
+**Device prompt:**
+> What was the codeword I gave you?
+
+**Pass:** the coordinator draws a blank — it has no recall of TANGERINE, confirming that
+the prior recall came from the resume injection, not hallucination or persistent memory.
+
+---
+
+### Scoring for Phase 7
+
+| Sub-phase | Pass signal |
+|---|---|
+| 7a | Clean start, no spurious "resuming" log |
+| 7b | `current.json` has a non-empty `summary`; `pendingResume` absent/false |
+| 7c | "resuming…" log line present; `pendingResume: true` staged |
+| 7d | Correct codeword + task recalled; `pendingResume` flipped to `false` |
+| 7e | `--fresh` suppresses recall; model draws a blank; `pendingResume` stays `false` |
+
+All five = **Phase 7 PASS**. Any miss in 7d or 7e is the diagnostic: a 7d miss means the
+SessionStart hook didn't inject the summary; a 7e miss means `--fresh` is not clearing the
+`pendingResume` flag before the hook fires.
 
 ---
 

@@ -352,6 +352,248 @@
       <div id="wash" data-layout-ignore></div>
     </div>
 
+    <!-- ============================================================
+         STATIC EXPLAINER — appended after animation container
+         Explains the two continuation modes: Failover vs Resume
+         Does NOT interact with any animated id or the GSAP timeline.
+    ============================================================ -->
+    <section id="continuation-modes" style="
+      width: 1920px;
+      background: var(--ink);
+      padding: 96px 210px 112px;
+      border-top: 1px solid var(--line);
+      position: relative;
+    ">
+      <!-- Section header -->
+      <div style="margin-bottom: 64px;">
+        <div class="kicker" style="margin-bottom: 18px; letter-spacing: 0.3em;">handoff machinery · two continuation modes</div>
+        <div style="font-size: 72px; font-weight: 200; line-height: 1.08; letter-spacing: -0.02em;">
+          Same store. Same hook. <span style="font-weight: 800; color: var(--accent);">Different flag.</span>
+        </div>
+        <div class="sub" style="margin-top: 24px; max-width: 1200px;">
+          Both modes share the same <span class="mono" style="color: #ece7dc;">handoff-store</span> and
+          <span class="mono" style="color: #ece7dc;">SessionStart</span> hook. They differ only in which
+          one-shot flag is set and the wording injected into the resuming session.
+        </div>
+      </div>
+
+      <!-- Two-column card layout -->
+      <div style="display: flex; gap: 48px; align-items: stretch;">
+
+        <!-- ── Card 1: Failover ── -->
+        <div style="
+          flex: 1;
+          background: var(--panel);
+          border: 1px solid var(--line);
+          border-radius: 24px;
+          padding: 52px 52px 56px;
+          position: relative;
+          overflow: hidden;
+        ">
+          <!-- Amber accent stripe -->
+          <div style="
+            position: absolute; top: 0; left: 0; right: 0; height: 4px;
+            background: linear-gradient(90deg, var(--amber) 0%, rgba(242,181,58,0.2) 100%);
+            border-radius: 24px 24px 0 0;
+          "></div>
+
+          <!-- Label pill -->
+          <div style="
+            display: inline-flex; align-items: center; gap: 12px;
+            background: rgba(242,181,58,0.10); border: 1px solid rgba(242,181,58,0.35);
+            border-radius: 999px; padding: 10px 22px; margin-bottom: 36px;
+          ">
+            <span style="font-size: 22px;">▲</span>
+            <span class="mono" style="font-size: 22px; font-weight: 700; color: var(--amber); letter-spacing: 0.12em;">FAILOVER</span>
+          </div>
+
+          <div style="font-size: 38px; font-weight: 700; line-height: 1.18; margin-bottom: 20px;">
+            A <em style="font-style: normal; color: var(--amber);">different</em> account takes over
+          </div>
+          <div class="sub" style="font-size: 26px; margin-bottom: 40px;">
+            The prior coordinator (<span class="mono" style="color: #ece7dc;">alice</span>) hit a
+            usage-limit, server, or auth error. The handoff store records the last
+            conversation summary and sets <span class="mono" style="color: var(--amber);">pendingFailover</span>
+            for the next account in the chain.
+          </div>
+
+          <!-- Flow diagram -->
+          <div style="
+            background: #131211; border: 1px solid var(--line);
+            border-radius: 16px; padding: 32px 36px 36px;
+            font-size: 24px; line-height: 1.7;
+          " class="mono">
+            <div style="color: var(--dim);">── trigger ──────────────────────────────</div>
+            <div style="margin-top: 10px;">
+              <span style="color: var(--red);">rate_limit</span>
+              <span style="color: var(--dim);"> | server_error | auth_error on </span>
+              <span style="color: #ece7dc;">alice</span>
+            </div>
+            <div style="color: var(--dim); margin-top: 18px;">── flag set in store ─────────────────────</div>
+            <div style="margin-top: 10px;">
+              <span style="color: var(--amber);">pendingFailover</span>
+              <span style="color: var(--dim);">[</span><span style="color: #ece7dc;">bob</span><span style="color: var(--dim);">] = true</span>
+            </div>
+            <div style="color: var(--dim); margin-top: 18px;">── SessionStart hook injects ─────────────</div>
+            <div style="margin-top: 10px; color: #ece7dc;">
+              "The coordinator <span style="color: var(--amber);">alice</span> became unavailable.<br>
+              &nbsp;Pick up the conversation from the<br>
+              &nbsp;summary below and continue."
+            </div>
+            <div style="color: var(--dim); margin-top: 18px;">── new active coordinator ────────────────</div>
+            <div style="margin-top: 10px;">
+              <span style="color: #ece7dc;">alice</span>
+              <span style="color: var(--dim);"> ▸▸▸ </span>
+              <span style="color: #5fd08a; font-weight: 700;">bob</span>
+              <span style="color: var(--dim);"> (or </span>
+              <span style="color: #5fd08a;">carol</span>
+              <span style="color: var(--dim);">, next in chain)</span>
+            </div>
+          </div>
+
+          <div style="
+            margin-top: 32px; padding: 22px 28px;
+            background: rgba(242,181,58,0.06); border-radius: 12px;
+            border-left: 3px solid var(--amber);
+            font-size: 23px; color: var(--dim); line-height: 1.5;
+          ">
+            Demonstrated above by the animation: <span style="color: #ece7dc;">profile a</span> limits out,
+            <span style="color: #ece7dc;">profile b</span> serves the request — same conversation, different account.
+          </div>
+        </div>
+
+        <!-- ── Card 2: Resume ── -->
+        <div style="
+          flex: 1;
+          background: var(--panel);
+          border: 1px solid var(--line);
+          border-radius: 24px;
+          padding: 52px 52px 56px;
+          position: relative;
+          overflow: hidden;
+        ">
+          <!-- Cyan accent stripe -->
+          <div style="
+            position: absolute; top: 0; left: 0; right: 0; height: 4px;
+            background: linear-gradient(90deg, var(--cyan) 0%, rgba(84,214,200,0.2) 100%);
+            border-radius: 24px 24px 0 0;
+          "></div>
+
+          <!-- Label pill -->
+          <div style="
+            display: inline-flex; align-items: center; gap: 12px;
+            background: rgba(84,214,200,0.08); border: 1px solid rgba(84,214,200,0.32);
+            border-radius: 999px; padding: 10px 22px; margin-bottom: 36px;
+          ">
+            <span style="font-size: 22px; color: var(--cyan);">↺</span>
+            <span class="mono" style="font-size: 22px; font-weight: 700; color: var(--cyan); letter-spacing: 0.12em;">RESUME</span>
+          </div>
+
+          <div style="font-size: 38px; font-weight: 700; line-height: 1.18; margin-bottom: 20px;">
+            The <em style="font-style: normal; color: var(--cyan);">same</em> coordinator reconnects
+          </div>
+          <div class="sub" style="font-size: 26px; margin-bottom: 40px;">
+            <span class="mono" style="color: #ece7dc;">alice</span> relaunches its
+            own session — e.g. after a crash or restart in server-mode Remote Control
+            (<span class="mono" style="color: #ece7dc;">claude remote-control</span>).
+            Because <span class="mono" style="color: #ece7dc;">remote-control</span> has no
+            <span class="mono" style="color: #ece7dc;">--resume</span>/<span class="mono" style="color: #ece7dc;">--continue</span>
+            flag, continuity is restored by the hook, not the CLI.
+          </div>
+
+          <!-- Flow diagram -->
+          <div style="
+            background: #131211; border: 1px solid var(--line);
+            border-radius: 16px; padding: 32px 36px 36px;
+            font-size: 24px; line-height: 1.7;
+          " class="mono">
+            <div style="color: var(--dim);">── trigger ──────────────────────────────</div>
+            <div style="margin-top: 10px;">
+              <span style="color: #ece7dc;">alice</span>
+              <span style="color: var(--dim);"> stops and restarts (crash / restart /</span><br>
+              <span style="color: var(--dim);">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;server-mode relaunch)</span>
+            </div>
+            <div style="color: var(--dim); margin-top: 18px;">── flag set in store ─────────────────────</div>
+            <div style="margin-top: 10px;">
+              <span style="color: var(--cyan);">pendingResume</span>
+              <span style="color: var(--dim);">[</span><span style="color: #ece7dc;">alice</span><span style="color: var(--dim);">] = true</span>
+              <span style="color: var(--dim);"> &nbsp;← keyed by </span><span style="color: var(--cyan);">--name</span>
+            </div>
+            <div style="color: var(--dim); margin-top: 18px;">── SessionStart hook injects ─────────────</div>
+            <div style="margin-top: 10px; color: #ece7dc;">
+              "You are resuming your own session.<br>
+              &nbsp;Here is your prior conversation<br>
+              &nbsp;summary — continue from here."
+            </div>
+            <div style="color: var(--dim); margin-top: 18px;">── active coordinator ────────────────────</div>
+            <div style="margin-top: 10px;">
+              <span style="color: var(--cyan); font-weight: 700;">alice</span>
+              <span style="color: var(--dim);"> resumes its own context (same </span><span style="color: var(--cyan);">--name</span><span style="color: var(--dim);">)</span>
+            </div>
+          </div>
+
+          <div style="
+            margin-top: 32px; padding: 22px 28px;
+            background: rgba(84,214,200,0.05); border-radius: 12px;
+            border-left: 3px solid var(--cyan);
+            font-size: 23px; color: var(--dim); line-height: 1.5;
+          ">
+            Pass <span class="mono" style="color: #ece7dc;">--fresh</span> to opt out — the hook skips injection and
+            <span style="color: #ece7dc;">alice</span> starts a clean session with no prior context.
+          </div>
+        </div>
+
+      </div><!-- end two-column -->
+
+      <!-- Footer comparison row -->
+      <div style="
+        margin-top: 56px;
+        display: flex; gap: 0;
+        background: #131211; border: 1px solid var(--line);
+        border-radius: 18px; overflow: hidden;
+        font-size: 24px;
+      " class="mono">
+        <div style="
+          flex: 0 0 220px; display: flex; align-items: center;
+          padding: 28px 32px; border-right: 1px solid var(--line);
+          color: var(--dim); letter-spacing: 0.1em;
+        ">COMPARE</div>
+        <div style="
+          flex: 1; display: grid;
+          grid-template-columns: 1fr 1fr 1fr;
+          border-right: 1px solid var(--line);
+        ">
+          <div style="padding: 28px 32px; border-right: 1px solid var(--line); color: var(--dim);">property</div>
+          <div style="padding: 28px 32px; border-right: 1px solid var(--line); color: var(--amber);">failover</div>
+          <div style="padding: 28px 32px; color: var(--cyan);">resume</div>
+
+          <div style="padding: 18px 32px; border-right: 1px solid var(--line); border-top: 1px solid var(--line); color: var(--dim);">store flag</div>
+          <div style="padding: 18px 32px; border-right: 1px solid var(--line); border-top: 1px solid var(--line); color: var(--amber);">pendingFailover[next]</div>
+          <div style="padding: 18px 32px; border-top: 1px solid var(--line); color: var(--cyan);">pendingResume[name]</div>
+
+          <div style="padding: 18px 32px; border-right: 1px solid var(--line); border-top: 1px solid var(--line); color: var(--dim);">keyed by</div>
+          <div style="padding: 18px 32px; border-right: 1px solid var(--line); border-top: 1px solid var(--line); color: #ece7dc;">next account in chain</div>
+          <div style="padding: 18px 32px; border-top: 1px solid var(--line); color: #ece7dc;">coordinator --name</div>
+
+          <div style="padding: 18px 32px; border-right: 1px solid var(--line); border-top: 1px solid var(--line); color: var(--dim);">who resumes</div>
+          <div style="padding: 18px 32px; border-right: 1px solid var(--line); border-top: 1px solid var(--line); color: #ece7dc;">bob / carol (different)</div>
+          <div style="padding: 18px 32px; border-top: 1px solid var(--line); color: #ece7dc;">alice (same)</div>
+
+          <div style="padding: 18px 32px; border-right: 1px solid var(--line); border-top: 1px solid var(--line); color: var(--dim);">injected wording</div>
+          <div style="padding: 18px 32px; border-right: 1px solid var(--line); border-top: 1px solid var(--line); color: #ece7dc;">"prior coordinator unavailable"</div>
+          <div style="padding: 18px 32px; border-top: 1px solid var(--line); color: #ece7dc;">"you are resuming your own session"</div>
+
+          <div style="padding: 18px 32px 28px; border-right: 1px solid var(--line); border-top: 1px solid var(--line); color: var(--dim);">opt-out</div>
+          <div style="padding: 18px 32px 28px; border-right: 1px solid var(--line); border-top: 1px solid var(--line); color: var(--dim);">n/a (automatic)</div>
+          <div style="padding: 18px 32px 28px; border-top: 1px solid var(--line); color: #ece7dc;">--fresh</div>
+        </div>
+      </div>
+
+    </section>
+    <!-- ============================================================
+         END STATIC EXPLAINER
+    ============================================================ -->
+
     <script>
       window.__timelines = window.__timelines || {};
       const tl = gsap.timeline({ paused: true });

@@ -408,15 +408,15 @@ Interactive is the **default, standard run mode** — `claude-profiles run --cha
 
 This is powered by a **shared directory** and a set of **auto-installed hooks**:
 
-- **Shared store:** `~/.claude/.claude-profiles/handoff/<chain>/current.json` — lives outside any single profile, so context is portable across accounts. It holds the chain's "thread": last profile, a running summary, the transcript reference, and a `pendingFailover` flag.
+- **Shared store:** `~/.claude/.claude-profiles/handoff/<chain>/current.json` — lives outside any single profile, so context is portable across accounts. It holds the chain's "thread": last profile, a running summary, the transcript reference, and one-shot `pendingFailover` / `pendingResume` flags.
 - **Hooks** (added to your shared `~/.claude/settings.json`, tagged and removable):
   - `Stop` / `SessionEnd` / `PreCompact` → snapshot the conversation to the shared store; if the last turn hit a limit/auth error, record the active profile's cooldown and set `pendingFailover`.
-  - `SessionStart` → **only after a failover**, inject the prior summary via `additionalContext` so the new account picks up seamlessly, then clear the flag.
+  - `SessionStart` → inject the prior summary via `additionalContext` so the session picks up where it left off, then clear the flag. It fires on two one-shot triggers: **after a failover** (a *different* account is taking over) and on a **coordinator resume** (the *same* `fleet coordinator --name` relaunching — see [Coordinator](#coordinator--steer-the-fleet-from-your-phone-official-remote-control)). Failover wins if both are set.
   - `UserPromptSubmit` → a per-turn **budget guardrail**: when the active account is near or over its effective session cap, inject a short "you're at X% — a switch is coming" note as `additionalContext`. Read-only; silent when there's headroom or no cap configured.
   - `Notification` → forward Claude Code's "waiting for input / needs permission" pings to a webhook (e.g. a Discord channel), tagged with which chain/account is waiting, so they reach your phone. No-op unless you've run `claude-profiles notify set <webhook-url>`.
   - `SubagentStop` → log each subagent completion to the routing history, so fleet / delegate work shows up under the active account in `chain status` / routing log.
 
-Continuity kicks in **only after a failover** — a clean session ends with no `pendingFailover`, so a fresh launch never re-injects last conversation's context. Use `run --new` to force a fresh thread.
+Continuity kicks in on a **failover** (a limit/auth error hands the thread to a healthy account) or a **coordinator resume** (relaunching `fleet coordinator` under the same `--name`) — otherwise a clean session ends with neither flag set, so a fresh launch never re-injects last conversation's context. Use `run --new` (or `fleet coordinator --fresh`) to force a fresh thread.
 
 The hooks **no-op unless a session was launched through a chain** (they key off `CLAUDE_PROFILES_CHAIN`), so your normal `claude` usage is completely unaffected. They're installed automatically on `chain create` / first chain `run`; manage them explicitly with:
 
@@ -532,6 +532,15 @@ Once connected, steer it like any session — e.g. type on your phone:
 
 > Use `delegate_parallel` to have `bob` audit `./api` for auth bugs and `carol`
 > review `./web` for a11y issues, then merge both into one prioritized list.
+
+**Auto-resume on relaunch.** A coordinator's `--name` is its continuity key. If the
+Remote Control connection drops (or you stop and re-run the command), relaunch with the
+**same `--name`** and it picks up where it left off — the previous conversation's summary
+is restored as the session's opening context. Server-mode Remote Control has no
+`--resume`/`--continue` flag of its own, so this is wired through our SessionStart hook:
+every turn snapshots the transcript to the shared handoff store keyed by name, and the
+relaunch injects it once. Pass `--fresh` to start a clean conversation under the same name
+instead. (The very first launch of a name has nothing to resume, so it always starts clean.)
 
 For a full, documentable QA protocol — multi-agent fan-out, **plan mode**, threading,
 resilience, plus an operator-side proof monitor and a scoring rubric — see
@@ -700,6 +709,10 @@ claude-alice  # Profile alias is ready
 | `claude-profiles usage report [--json] [--window <dur>]` | Hard token counts + estimated cost per account, measured from Claude's own session transcripts (TUI **and** headless) |
 | `claude-profiles usage` | Inspect / set per-profile session & weekly budgets |
 | `claude-profiles channel` | Run the Channel sidecar (health events + mid-run switching) |
+| `claude-profiles fleet status` | Health of every account the orchestrator can delegate to |
+| `claude-profiles fleet run <profile> <prompt>` | One-shot dispatch to a single account (handy for testing) |
+| `claude-profiles fleet coordinator --lead <name>` | Launch a lead profile as a **Remote Control** session (steer from claude.ai/code or the Claude app) with the fleet tools attached. `--name <n>` titles + keys the session, `--server` drives entirely from a device, `--permission-mode <m>` sets approvals. Relaunching the same `--name` **auto-resumes** its last conversation; `--fresh` starts clean |
+| `claude-profiles notify set/status/test/clear` | Forward Claude Code `Notification` pings to a webhook (Discord/Slack) so they reach your phone (`--events` filters which) |
 | `claude-profiles handoff status / enable / disable / clear` | Manage cross-session continuity |
 | `claude-profiles sync push / pull / status / setup` | Git sync |
 

@@ -46,6 +46,7 @@
   .leg.auto{border-color:#5a4a1e}.leg.auto .gly{color:var(--yellow)}
   .leg.launch{border-color:#4a2f24}.leg.launch .gly{color:var(--accent)}
   .leg.exhausted{border-color:#5a2424}.leg.exhausted .gly{color:var(--red)}
+  .leg.subagent{border-color:#1a3a5a}.leg.subagent .gly{color:var(--blue)}
   .leg small{color:var(--faint);font-family:var(--mono);font-size:12px}
 
   /* terminal */
@@ -77,6 +78,7 @@
   .pill.auto{color:var(--yellow);border:1px solid #5a4a1e;background:#1a1509}
   .pill.launch{color:var(--accent);border:1px solid #4a2f24;background:#190f0b}
   .pill.exhausted{color:var(--red);border:1px solid #5a2424;background:#190b0b}
+  .pill.subagent{color:var(--blue);border:1px solid #1a3a5a;background:#08111a}
 
   footer{padding:40px 0 70px;color:var(--faint);font-size:13px}
   .mut{color:var(--faint)}
@@ -141,6 +143,10 @@
       <div class="leg exhausted">
         <div class="gly">×</div>
         <div><h3>exhausted</h3><p>No healthy account was left to try. <small>category: exhausted · red</small></p></div>
+      </div>
+      <div class="leg subagent">
+        <div class="gly">⬡</div>
+        <div><h3>subagent completion</h3><p>A delegate or parallel sub-agent (<code>fleet</code> / <code>delegate</code> / <code>delegate_parallel</code>) finished. Recorded by the <code>SubagentStop</code> hook on the coordinator account (e.g. alice) so sub-agent work by workers (e.g. bob, carol) shows up in <code>chain status</code> and <code>chain log</code> alongside launches and failovers. No-ops when the session was not started through a chain (<code>CLAUDE_PROFILES_CHAIN</code> not set). <small>category: subagent · blue</small></p></div>
       </div>
     </div>
   </section>
@@ -271,6 +277,7 @@
       <tr><td><code>auth</code></td><td><span class="pill auto">auto-failover</span></td><td class="y">▲</td><td>auto-failover (auth)</td><td>router on expired auth</td></tr>
       <tr><td><code>server</code></td><td><span class="pill auto">auto-failover</span></td><td class="y">▲</td><td>auto-failover (server)</td><td>router on 5xx / overloaded</td></tr>
       <tr><td><code>exhausted</code></td><td><span class="pill exhausted">exhausted</span></td><td class="r">×</td><td>exhausted</td><td>no healthy account left</td></tr>
+      <tr><td><code>subagent</code></td><td><span class="pill subagent">subagent</span></td><td class="b">⬡</td><td>subagent completion</td><td><code>SubagentStop</code> hook on coordinator</td></tr>
     </table>
     <p class="note mut">Classification (<code>routingCategory</code>) and labels (<code>routingLabel</code>) are pure, IO-free, color-free functions in <code>routing-log.ts</code>; the terminal layer in <code>render.ts</code> adds the color. 380 unit tests green.</p>
   </section>
