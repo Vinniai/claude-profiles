@@ -21,6 +21,7 @@
   },
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
+    "postbuild": "chmod +x dist/index.js",
     "dev": "tsx src/index.ts",
     "test": "npm run test:unit && npm run test:integration",
     "test:unit": "vitest run",
