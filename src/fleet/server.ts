@@ -7,9 +7,10 @@ import {
 } from '@modelcontextprotocol/sdk/types.js';
 import {
   dispatch,
-  runFleet,
+  dispatchRouted,
+  runRoutedFleet,
   fleetStatus,
-  type WorkerTask,
+  type RoutedWorkerTask,
   type WorkerResult,
 } from '../lib/fleet.js';
 
@@ -44,6 +45,7 @@ function log(msg: string): void {
 export function summarizeResult(r: WorkerResult): Record<string, unknown> {
   return {
     profile: r.profile,
+    provider: r.provider,
     ok: r.ok,
     kind: r.kind,
     text: r.text,
@@ -51,22 +53,68 @@ export function summarizeResult(r: WorkerResult): Record<string, unknown> {
     costUsd: r.costUsd,
     durationMs: r.durationMs,
     numTurns: r.numTurns,
+    attemptedProfiles: r.attemptedProfiles,
+    modelUsed: r.modelUsed,
+    skillsUsed: r.skillsUsed,
+    attempts: r.attempts,
+    handoffFromSessionId: r.handoffFromSessionId,
     ...(r.ok ? {} : { reason: r.outcome.reason }),
     ...(r.error ? { error: r.error } : {}),
   };
 }
 
 /** Parse a loose tool-args object into a typed {@link WorkerTask}. */
-export function taskFromArgs(args: Record<string, unknown>): WorkerTask | null {
-  const profile = typeof args.profile === 'string' ? args.profile : null;
+export function taskFromArgs(args: Record<string, unknown>): RoutedWorkerTask | null {
+  const profile = typeof args.profile === 'string' ? args.profile : undefined;
+  const chain = typeof args.chain === 'string' ? args.chain : undefined;
+  const taskType = typeof args.taskType === 'string' ? args.taskType : undefined;
   const prompt = typeof args.prompt === 'string' ? args.prompt : null;
-  if (!profile || !prompt) return null;
+  if (!prompt || [profile, chain, taskType].filter(Boolean).length !== 1) return null;
+  const stringArray = (value: unknown): string[] | undefined =>
+    Array.isArray(value)
+      ? value.filter((item): item is string => typeof item === 'string')
+      : undefined;
+  const providerModels =
+    args.models && typeof args.models === 'object'
+      ? (args.models as Record<string, unknown>)
+      : undefined;
+  const providerSkills =
+    args.providerSkills && typeof args.providerSkills === 'object'
+      ? (args.providerSkills as Record<string, unknown>)
+      : undefined;
   return {
     profile,
+    chain,
+    taskType,
     prompt,
     model: typeof args.model === 'string' ? args.model : undefined,
     resume: typeof args.resume === 'string' ? args.resume : undefined,
     timeoutMs: typeof args.timeoutMs === 'number' ? args.timeoutMs : undefined,
+    fallback: typeof args.fallback === 'boolean' ? args.fallback : undefined,
+    fallbackProfiles: Array.isArray(args.fallbackProfiles)
+      ? args.fallbackProfiles.filter((v): v is string => typeof v === 'string')
+      : undefined,
+    models: providerModels
+      ? {
+          claude:
+            typeof providerModels.claude === 'string'
+              ? providerModels.claude
+              : undefined,
+          codex:
+            typeof providerModels.codex === 'string'
+              ? providerModels.codex
+              : undefined,
+        }
+      : undefined,
+    skills: stringArray(args.skills),
+    providerSkills: providerSkills
+      ? {
+          claude: stringArray(providerSkills.claude),
+          codex: stringArray(providerSkills.codex),
+        }
+      : undefined,
+    handoffContext:
+      typeof args.handoffContext === 'string' ? args.handoffContext : undefined,
   };
 }
 
@@ -95,8 +143,12 @@ export async function startFleetServer(
     {
       capabilities: { tools: {} },
       instructions:
-        'These tools delegate work to OTHER claude-profiles accounts as headless workers. ' +
-        'Use delegate(profile, prompt) to run a single task on another account, or ' +
+        'These tools delegate work to isolated Claude or Codex account profiles as headless workers. ' +
+        'Use delegate with exactly one of profile, chain, or taskType. Chains and task types ' +
+        'fall back only on rate-limit, authentication, or transient server failures. ' +
+        'Use models={claude,codex} for provider-specific models and skills/providerSkills ' +
+        'for workflows such as imagegen. Include handoffContext when a fallback must continue ' +
+        'decisions or work from the calling session. ' +
         'delegate_parallel(tasks) to fan several out at once. Each result includes a sessionId — ' +
         'pass it back as `resume` to continue that worker with its context intact. ' +
         'Call fleet_status() to see which accounts are healthy before dispatching.',
@@ -109,18 +161,50 @@ export async function startFleetServer(
       {
         name: 'delegate',
         description:
-          'Run a prompt as a headless worker on another profile (its own account). Returns the worker’s text, sessionId (pass back as resume to continue), and cost.',
+          'Run a prompt on an explicit profile, fallback chain, or task route. Returns provider, attempted profiles, text, and a resumable sessionId.',
         inputSchema: {
           type: 'object',
-          required: ['profile', 'prompt'],
-          properties: {
-            profile: { type: 'string', description: 'Profile/account name to run under.' },
-            prompt: { type: 'string', description: 'The prompt to send to the worker.' },
+        required: ['prompt'],
+        properties: {
+          profile: { type: 'string', description: 'Profile/account name to run under.' },
+          chain: { type: 'string', description: 'Named ordered fallback chain.' },
+          taskType: { type: 'string', description: 'Task route such as review, test, or implementation.' },
+          prompt: { type: 'string', description: 'The prompt to send to the worker.' },
             model: { type: 'string', description: 'Optional model override.' },
+            models: {
+              type: 'object',
+              description: 'Provider-specific models. These override model.',
+              properties: {
+                claude: { type: 'string' },
+                codex: { type: 'string' },
+              },
+            },
+            skills: {
+              type: 'array',
+              items: { type: 'string' },
+              description: 'Installed skills every provider should use.',
+            },
+            providerSkills: {
+              type: 'object',
+              properties: {
+                claude: { type: 'array', items: { type: 'string' } },
+                codex: { type: 'array', items: { type: 'string' } },
+              },
+            },
+            handoffContext: {
+              type: 'string',
+              description: 'Requirements, decisions, artifact paths, or completed work to carry into a fresh fallback session.',
+            },
             resume: { type: 'string', description: 'Session id from a prior result to continue that worker.' },
-            timeoutMs: { type: 'number', description: 'Kill the worker after this many ms.' },
+          timeoutMs: { type: 'number', description: 'Kill the worker after this many ms.' },
+          fallback: { type: 'boolean', description: 'Enable/disable retrying another profile on account/transient failures.' },
+          fallbackProfiles: {
+            type: 'array',
+            items: { type: 'string' },
+            description: 'Ordered profiles appended as explicit fallbacks.',
           },
         },
+      },
       },
       {
         name: 'delegate_parallel',
@@ -134,13 +218,33 @@ export async function startFleetServer(
               type: 'array',
               items: {
                 type: 'object',
-                required: ['profile', 'prompt'],
+                required: ['prompt'],
                 properties: {
                   profile: { type: 'string' },
+                  chain: { type: 'string' },
+                  taskType: { type: 'string' },
                   prompt: { type: 'string' },
                   model: { type: 'string' },
+                  models: {
+                    type: 'object',
+                    properties: {
+                      claude: { type: 'string' },
+                      codex: { type: 'string' },
+                    },
+                  },
+                  skills: { type: 'array', items: { type: 'string' } },
+                  providerSkills: {
+                    type: 'object',
+                    properties: {
+                      claude: { type: 'array', items: { type: 'string' } },
+                      codex: { type: 'array', items: { type: 'string' } },
+                    },
+                  },
+                  handoffContext: { type: 'string' },
                   resume: { type: 'string' },
                   timeoutMs: { type: 'number' },
+                  fallback: { type: 'boolean' },
+                  fallbackProfiles: { type: 'array', items: { type: 'string' } },
                 },
               },
             },
@@ -162,20 +266,24 @@ export async function startFleetServer(
 
     if (name === 'delegate') {
       const task = taskFromArgs(args);
-      if (!task) throw new Error('delegate requires `profile` and `prompt`');
-      const result = await dispatch(task);
+      if (!task) {
+        throw new Error(
+          'delegate requires `prompt` and exactly one of `profile`, `chain`, or `taskType`',
+        );
+      }
+      const result = await dispatchRouted(task);
       return { content: [{ type: 'text', text: JSON.stringify(summarizeResult(result), null, 2) }] };
     }
 
     if (name === 'delegate_parallel') {
       const rawTasks = Array.isArray(args.tasks) ? args.tasks : [];
-      const tasks: WorkerTask[] = [];
+      const tasks: RoutedWorkerTask[] = [];
       for (const t of rawTasks) {
         const task = taskFromArgs((t ?? {}) as Record<string, unknown>);
         if (task) tasks.push(task);
       }
       if (tasks.length === 0) throw new Error('delegate_parallel requires a non-empty `tasks` array');
-      const results = await runFleet(tasks, {
+      const results = await runRoutedFleet(tasks, {
         concurrency: typeof args.concurrency === 'number' ? args.concurrency : concurrency,
       });
       return {
@@ -284,17 +392,20 @@ async function handleHttp(
     const body = await readJsonBody(req);
     const task = taskFromArgs(body);
     if (!task) {
-      send(res, 400, { error: 'delegate requires `profile` and `prompt`' });
+      send(res, 400, {
+        error:
+          'delegate requires `prompt` and exactly one of `profile`, `chain`, or `taskType`',
+      });
       return;
     }
-    send(res, 200, summarizeResult(await dispatch(task)));
+    send(res, 200, summarizeResult(await dispatchRouted(task)));
     return;
   }
 
   if (method === 'POST' && url.pathname === '/delegate-parallel') {
     const body = await readJsonBody(req);
     const rawTasks = Array.isArray(body.tasks) ? body.tasks : [];
-    const tasks: WorkerTask[] = [];
+    const tasks: RoutedWorkerTask[] = [];
     for (const t of rawTasks) {
       const task = taskFromArgs((t ?? {}) as Record<string, unknown>);
       if (task) tasks.push(task);
@@ -303,7 +414,7 @@ async function handleHttp(
       send(res, 400, { error: 'delegate-parallel requires a non-empty `tasks` array' });
       return;
     }
-    const results = await runFleet(tasks, {
+    const results = await runRoutedFleet(tasks, {
       concurrency: typeof body.concurrency === 'number' ? body.concurrency : defaultConcurrency,
     });
     send(res, 200, results.map(summarizeResult));

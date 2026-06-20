@@ -17,6 +17,9 @@ import {
   addToChain,
   installChainAlias,
   SHARED_ITEMS,
+  CODEX_SHARED_ITEMS,
+  ensureCodexConfigProfile,
+  getProfileProvider,
   type CreateProfileOptions,
 } from '../lib/profiles.js';
 import { getClaudeProfilesDir } from '../lib/paths.js';
@@ -26,6 +29,7 @@ import {
   ErrorCode,
   PLAN_TIERS,
   type PlanTier,
+  type ProfileProvider,
 } from '../types/index.js';
 import fs from 'fs-extra';
 
@@ -89,8 +93,11 @@ function buildProfileCreate(cmdName: string): Command {
   .option('--description <text>', 'Human-friendly description (e.g. "work Max account")')
   .option('--priority <n>', 'Fallback priority (lower is tried first)', (v) => parseInt(v, 10))
   .option('--plan <tier>', `Subscription tier: ${PLAN_TIERS.join('|')}`)
+  .option('--provider <provider>', 'Runtime provider: claude|codex', 'claude')
+  .option('--config-profile <name>', 'Native Codex config profile inside CODEX_HOME')
+  .option('--tasks <list>', 'Comma-separated task types this profile should receive')
   .option('--chain <name>', 'Also append this profile to the named fallback chain')
-  .action(async (nameArg: string | undefined, options: { yes?: boolean; shell?: string; shareStatusline?: boolean; shareClaudeMd?: boolean; description?: string; priority?: number; plan?: string; chain?: string }) => {
+  .action(async (nameArg: string | undefined, options: { yes?: boolean; shell?: string; shareStatusline?: boolean; shareClaudeMd?: boolean; description?: string; priority?: number; plan?: string; provider?: string; configProfile?: string; tasks?: string; chain?: string }) => {
     // Verify claude-profiles is initialized
     const jcDir = getClaudeProfilesDir();
     if (!(await fs.pathExists(jcDir))) {
@@ -113,7 +120,15 @@ function buildProfileCreate(cmdName: string): Command {
       );
     }
 
-    const configDir = getProfileConfigDir(name);
+    if (options.provider !== 'claude' && options.provider !== 'codex') {
+      throw new ClaudeProfilesError(
+        `Unknown provider "${options.provider}"`,
+        ErrorCode.INVALID_CONFIG,
+        'Choose claude or codex.'
+      );
+    }
+    const provider = options.provider as ProfileProvider;
+    const configDir = getProfileConfigDir(name, provider);
 
     // Fail early if profile already exists (before prompting for options)
     const existingConfig = await loadProfiles();
@@ -136,21 +151,39 @@ function buildProfileCreate(cmdName: string): Command {
     console.log();
     logger.table([
       ['Config directory', chalk.cyan(formatPath(configDir))],
-      ['Shell alias', chalk.cyan(`claude-${name}`)],
+      ['Provider', chalk.cyan(provider)],
+      ['Shell alias', chalk.cyan(`${provider}-${name}`)],
     ]);
     console.log();
 
-    logger.dim('The following items will be symlinked from your main config:');
-    logger.list(SHARED_ITEMS.map((i) => i.name));
+    logger.dim(`The following items will be symlinked from your main ${provider} config:`);
+    logger.list(
+      (provider === 'codex' ? CODEX_SHARED_ITEMS : SHARED_ITEMS).map((i) => i.name)
+    );
     console.log();
 
     // Determine optional sharing preferences
     const createOptions: CreateProfileOptions = {};
+    createOptions.provider = provider;
+    if (options.configProfile) createOptions.configProfile = options.configProfile;
+    if (options.tasks) {
+      createOptions.taskTypes = options.tasks
+        .split(',')
+        .map((v) => v.trim())
+        .filter(Boolean);
+    }
     if (options.description) createOptions.description = options.description;
     if (typeof options.priority === 'number' && !Number.isNaN(options.priority)) {
       createOptions.priority = options.priority;
     }
     if (options.plan) {
+      if (provider === 'codex') {
+        throw new ClaudeProfilesError(
+          '--plan is currently Claude-specific',
+          ErrorCode.INVALID_CONFIG,
+          'Use --weight to set Codex routing capacity.'
+        );
+      }
       if (!PLAN_TIERS.includes(options.plan as PlanTier)) {
         throw new ClaudeProfilesError(
           `Unknown plan "${options.plan}"`,
@@ -161,23 +194,23 @@ function buildProfileCreate(cmdName: string): Command {
       createOptions.plan = options.plan as PlanTier;
     }
 
-    if (options.shareStatusline !== undefined) {
+    if (provider === 'claude' && options.shareStatusline !== undefined) {
       createOptions.shareStatusline = options.shareStatusline;
-    } else if (!options.yes) {
+    } else if (provider === 'claude' && !options.yes) {
       createOptions.shareStatusline = await confirm(
         'Share your statusline configuration with this profile?'
       );
     }
 
-    if (options.shareClaudeMd !== undefined) {
+    if (provider === 'claude' && options.shareClaudeMd !== undefined) {
       createOptions.shareClaudeMd = options.shareClaudeMd;
-    } else if (!options.yes) {
+    } else if (provider === 'claude' && !options.yes) {
       createOptions.shareClaudeMd = await confirm(
         'Share your CLAUDE.md with this profile?'
       );
     }
 
-    if (!createOptions.shareClaudeMd) {
+    if (provider === 'claude' && !createOptions.shareClaudeMd) {
       logger.dim(
         'Profile-specific files (like CLAUDE.md) will be independent.'
       );
@@ -199,7 +232,7 @@ function buildProfileCreate(cmdName: string): Command {
 
     // If the dir was already authenticated (e.g. re-adopting an existing
     // ~/.claude-<name>) and the user didn't pin a plan, read it from the CLI.
-    if (!createOptions.plan) {
+    if (provider === 'claude' && !createOptions.plan) {
       await autoDetectAndPersistPlan(name, profile.configDir);
     }
 
@@ -230,7 +263,13 @@ function buildProfileCreate(cmdName: string): Command {
     console.log();
     logger.heading('Next steps');
     console.log();
-    if (createOptions.shareClaudeMd) {
+    if (provider === 'codex') {
+      logger.list([
+        `Reload your shell or run: ${chalk.cyan(`source ~/${shellFile}`)}`,
+        `Authenticate with ${chalk.cyan(`claude-profiles login ${name}`)}.`,
+        `Then use ${chalk.cyan(`codex-${name}`)} to launch Codex with its isolated account.`,
+      ]);
+    } else if (createOptions.shareClaudeMd) {
       logger.list([
         `Reload your shell or run: ${chalk.cyan(`source ~/${shellFile}`)}`,
         `Then use ${chalk.cyan(`claude-${name}`)} to launch Claude Code with this profile.`,
@@ -247,7 +286,7 @@ function buildProfileCreate(cmdName: string): Command {
 }
 
 const profileListCommand = new Command('list')
-  .description('List all Claude Code profiles')
+  .description('List all Claude Code and Codex profiles')
   .action(async () => {
     const config = await loadProfiles();
     const names = Object.keys(config.profiles);
@@ -270,6 +309,7 @@ const profileListCommand = new Command('list')
 
       console.log(`  ${chalk.bold(name)}`);
       const rows: [string, string][] = [
+        ['Provider', chalk.cyan(getProfileProvider(profile))],
         ['Alias', chalk.cyan(profile.alias)],
         ['Config', formatPath(profile.configDir)],
         ['Status', status],
@@ -278,12 +318,16 @@ const profileListCommand = new Command('list')
       if (profile.weight != null) rows.push(['Weight', String(profile.weight)]);
       if (profile.priority != null) rows.push(['Priority', String(profile.priority)]);
       if (profile.description) rows.push(['Description', profile.description]);
+      if (profile.configProfile) rows.push(['Codex config profile', profile.configProfile]);
+      if (profile.taskTypes?.length) rows.push(['Tasks', profile.taskTypes.join(', ')]);
       logger.table(rows);
 
       // Check symlink health
       if (exists) {
         const broken: string[] = [];
-        for (const item of SHARED_ITEMS) {
+        const sharedItems =
+          getProfileProvider(profile) === 'codex' ? CODEX_SHARED_ITEMS : SHARED_ITEMS;
+        for (const item of sharedItems) {
           const itemPath = `${profile.configDir}/${item.name}`;
           try {
             const stat = await fs.lstat(itemPath);
@@ -398,12 +442,14 @@ const profileRefreshCommand = new Command('refresh')
 
     // Re-sync the plan tier from the CLI's config while we're here.
     const profile = config.profiles[name];
-    if (profile) await autoDetectAndPersistPlan(name, profile.configDir);
+    if (profile && getProfileProvider(profile) === 'claude') {
+      await autoDetectAndPersistPlan(name, profile.configDir);
+    }
   });
 
 function buildProfileLogin(cmdName: string): Command {
   return new Command(cmdName)
-  .description("Authenticate a profile's OAuth account (runs `claude` in its config dir)")
+  .description("Authenticate a profile's account using its configured provider")
   .argument('[name]', 'Profile to log in')
   .action(async (nameArg?: string) => {
     const config = await loadProfiles();
@@ -430,13 +476,20 @@ function buildProfileLogin(cmdName: string): Command {
       );
     }
 
-    logger.dim(
-      `Launching Claude for profile "${name}". Use /login inside, then exit.`
-    );
-    const bin = process.env.CLAUDE_PROFILES_CLAUDE_BIN || 'claude';
+    const provider = getProfileProvider(profile);
+    logger.dim(`Launching ${provider} login for profile "${name}".`);
+    const bin =
+      provider === 'codex'
+        ? process.env.CLAUDE_PROFILES_CODEX_BIN || 'codex'
+        : process.env.CLAUDE_PROFILES_CLAUDE_BIN || 'claude';
+    const args = provider === 'codex' ? ['login'] : ['/login'];
+    const env =
+      provider === 'codex'
+        ? { ...process.env, CODEX_HOME: profile.configDir }
+        : { ...process.env, CLAUDE_CONFIG_DIR: profile.configDir };
     await new Promise<void>((resolve, reject) => {
-      const child = spawn(bin, ['/login'], {
-        env: { ...process.env, CLAUDE_CONFIG_DIR: profile.configDir },
+      const child = spawn(bin, args, {
+        env,
         stdio: 'inherit',
       });
       child.on('error', (err: NodeJS.ErrnoException) => {
@@ -444,8 +497,12 @@ function buildProfileLogin(cmdName: string): Command {
           reject(
             new ClaudeProfilesError(
               `Could not find the "${bin}" CLI on your PATH`,
-              ErrorCode.CLAUDE_NOT_FOUND,
-              'Install Claude Code, or set CLAUDE_PROFILES_CLAUDE_BIN to its path.'
+              provider === 'codex'
+                ? ErrorCode.CODEX_NOT_FOUND
+                : ErrorCode.CLAUDE_NOT_FOUND,
+              provider === 'codex'
+                ? 'Install Codex CLI, or set CLAUDE_PROFILES_CODEX_BIN to its path.'
+                : 'Install Claude Code, or set CLAUDE_PROFILES_CLAUDE_BIN to its path.'
             )
           );
           return;
@@ -458,7 +515,9 @@ function buildProfileLogin(cmdName: string): Command {
     // Now that the account is authenticated, read its plan tier straight from
     // the CLI's own config and persist it — saves the user setting `--plan` by
     // hand, and keeps routing weights accurate. Best-effort; never fails login.
-    await autoDetectAndPersistPlan(name, profile.configDir);
+    if (provider === 'claude') {
+      await autoDetectAndPersistPlan(name, profile.configDir);
+    }
   });
 }
 
@@ -467,6 +526,8 @@ interface ProfileSetOptions {
   priority?: string;
   description?: string;
   plan?: string;
+  configProfile?: string;
+  tasks?: string;
 }
 
 const profileSetCommand = new Command('set')
@@ -476,6 +537,8 @@ const profileSetCommand = new Command('set')
   .option('--priority <n>', 'Fallback priority (lower is tried first)')
   .option('--plan <tier>', `Subscription tier: ${PLAN_TIERS.join('|')}`)
   .option('--description <text>', 'Human-friendly description')
+  .option('--config-profile <name>', 'Native Codex config profile')
+  .option('--tasks <list>', 'Comma-separated MCP task types')
   .action(async (name: string, options: ProfileSetOptions) => {
     const config = await loadProfiles();
     const profile = config.profiles[name];
@@ -491,12 +554,14 @@ const profileSetCommand = new Command('set')
       options.weight == null &&
       options.priority == null &&
       options.plan == null &&
-      options.description == null
+      options.description == null &&
+      options.configProfile == null &&
+      options.tasks == null
     ) {
       throw new ClaudeProfilesError(
         'Nothing to set',
         ErrorCode.INVALID_CONFIG,
-        'Pass at least one of --weight, --priority, --plan, --description.'
+        'Pass at least one of --weight, --priority, --plan, --description, --config-profile, --tasks.'
       );
     }
 
@@ -525,6 +590,13 @@ const profileSetCommand = new Command('set')
     }
 
     if (options.plan != null) {
+      if (getProfileProvider(profile) === 'codex') {
+        throw new ClaudeProfilesError(
+          '--plan is currently Claude-specific',
+          ErrorCode.INVALID_CONFIG,
+          'Use --weight to set Codex routing capacity.',
+        );
+      }
       if (!PLAN_TIERS.includes(options.plan as PlanTier)) {
         throw new ClaudeProfilesError(
           `Unknown plan "${options.plan}"`,
@@ -538,6 +610,20 @@ const profileSetCommand = new Command('set')
     if (options.description != null) {
       profile.description = options.description;
     }
+    if (options.configProfile != null) {
+      await ensureCodexConfigProfile(profile, options.configProfile);
+      profile.configProfile = options.configProfile;
+    }
+    if (options.tasks != null) {
+      profile.taskTypes = [
+        ...new Set(
+          options.tasks
+            .split(',')
+            .map((v) => v.trim())
+            .filter(Boolean)
+        ),
+      ];
+    }
 
     await saveProfiles(config);
 
@@ -547,11 +633,13 @@ const profileSetCommand = new Command('set')
       ['Weight', profile.weight != null ? chalk.cyan(String(profile.weight)) : chalk.dim('(plan default)')],
       ['Priority', profile.priority != null ? chalk.cyan(String(profile.priority)) : chalk.dim('(big-first default)')],
       ['Description', profile.description ? profile.description : chalk.dim('(none)')],
+      ['Codex config profile', profile.configProfile ?? chalk.dim('(none)')],
+      ['Tasks', profile.taskTypes?.join(', ') ?? chalk.dim('(none)')],
     ]);
   });
 
 export const profileCommand = new Command('profile')
-  .description('Manage Claude Code profiles for multiple accounts')
+  .description('Manage isolated Claude Code and Codex account profiles')
   .addCommand(buildProfileCreate('create'))
   .addCommand(profileListCommand)
   .addCommand(profileSetCommand)

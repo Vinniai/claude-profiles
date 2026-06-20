@@ -1,7 +1,12 @@
 import { describe, it, expect } from 'vitest';
 import { Readable } from 'stream';
 import type { IncomingMessage } from 'http';
-import { readJsonBody, HttpError, MAX_BODY_BYTES } from '../../../src/fleet/server.js';
+import {
+  readJsonBody,
+  HttpError,
+  MAX_BODY_BYTES,
+  taskFromArgs,
+} from '../../../src/fleet/server.js';
 
 /** A minimal IncomingMessage stand-in: readJsonBody only async-iterates the body. */
 function bodyReq(...parts: Array<string | Buffer>): IncomingMessage {
@@ -37,5 +42,37 @@ describe('readJsonBody', () => {
   it('stops reading once the cap is exceeded across chunks', async () => {
     const half = Buffer.alloc(Math.ceil(MAX_BODY_BYTES / 2) + 1, 0x61);
     await expect(readJsonBody(bodyReq(half, half))).rejects.toMatchObject({ status: 413 });
+  });
+});
+
+describe('taskFromArgs routing selectors', () => {
+  it('accepts profile, chain, or taskType selectors', () => {
+    expect(taskFromArgs({ profile: 'a', prompt: 'x' })?.profile).toBe('a');
+    expect(taskFromArgs({ chain: 'reviewers', prompt: 'x' })?.chain).toBe('reviewers');
+    expect(taskFromArgs({ taskType: 'review', prompt: 'x' })?.taskType).toBe('review');
+  });
+
+  it('rejects missing or ambiguous selectors', () => {
+    expect(taskFromArgs({ prompt: 'x' })).toBeNull();
+    expect(taskFromArgs({ profile: 'a', chain: 'b', prompt: 'x' })).toBeNull();
+  });
+
+  it('parses provider model, skill, and handoff mappings', () => {
+    expect(
+      taskFromArgs({
+        chain: 'hybrid',
+        prompt: 'make an image',
+        models: { claude: 'opus', codex: 'gpt-5.5' },
+        skills: ['design'],
+        providerSkills: { codex: ['imagegen'] },
+        handoffContext: 'Approved palette: blue',
+      }),
+    ).toMatchObject({
+      chain: 'hybrid',
+      models: { claude: 'opus', codex: 'gpt-5.5' },
+      skills: ['design'],
+      providerSkills: { codex: ['imagegen'] },
+      handoffContext: 'Approved palette: blue',
+    });
   });
 });

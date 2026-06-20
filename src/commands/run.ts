@@ -14,6 +14,7 @@ import { parseUsageFromText } from '../lib/usage.js';
 import { appendRoutingEvent, flushRoutingLog } from '../lib/routing-log.js';
 import { printTransition, printLaunchBanner } from '../lib/render.js';
 import { parseProfilesSpec } from '../lib/profile-spec.js';
+import { getProfileProvider } from '../lib/profiles.js';
 import {
   ClaudeProfilesError,
   ErrorCode,
@@ -193,6 +194,20 @@ export const runCommand = new Command('run')
 
     const mode = detectMode(claudeArgs, options);
     const chainKey = await resolveChainKey(options);
+    // A bare `run` remains the Claude interactive/session router. In a mixed
+    // registry, ignore Codex accounts unless the user explicitly selected a
+    // profile/chain, in which case the validation below returns a clear error.
+    const routingConfig =
+      options.profile || options.profiles || options.chain
+        ? config
+        : {
+            ...config,
+            profiles: Object.fromEntries(
+              Object.entries(config.profiles).filter(
+                ([, profile]) => getProfileProvider(profile) === 'claude'
+              )
+            ),
+          };
 
     // Sticky session: on an interactive *continuation* (same thread, not --new),
     // pin the account the conversation last ran on so a load-spreading strategy
@@ -203,7 +218,7 @@ export const runCommand = new Command('run')
         ? priorHandoff?.lastProfile
         : undefined;
 
-    const { candidates, deferred, strategy } = await buildCandidates(config, {
+    const { candidates, deferred, strategy } = await buildCandidates(routingConfig, {
       chain: options.chain,
       profile: options.profile,
       profiles: adHocProfiles,
@@ -212,6 +227,17 @@ export const runCommand = new Command('run')
       policyOverride,
       stickTo,
     });
+
+    const codexCandidates = candidates.filter(
+      (candidate) => getProfileProvider(candidate.profile) === 'codex'
+    );
+    if (codexCandidates.length > 0) {
+      throw new ClaudeProfilesError(
+        `The Claude session router cannot launch Codex profile${codexCandidates.length > 1 ? 's' : ''}: ${codexCandidates.map((candidate) => candidate.name).join(', ')}`,
+        ErrorCode.INVALID_CONFIG,
+        'Launch a Codex profile with its codex-<name> alias, or delegate through `claude-profiles fleet`.'
+      );
+    }
 
     if (candidates.length === 0) {
       throw new ClaudeProfilesError(

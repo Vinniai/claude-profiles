@@ -30,6 +30,7 @@ export enum ErrorCode {
   RATE_LIMITED = 'RATE_LIMITED',
   ALL_PROFILES_EXHAUSTED = 'ALL_PROFILES_EXHAUSTED',
   CLAUDE_NOT_FOUND = 'CLAUDE_NOT_FOUND',
+  CODEX_NOT_FOUND = 'CODEX_NOT_FOUND',
   NO_CHAIN = 'NO_CHAIN',
   PROFILE_NOT_FOUND = 'PROFILE_NOT_FOUND',
 }
@@ -88,6 +89,20 @@ export interface DoctorCheck {
  * double as the default routing weight for an account on that plan.
  */
 export type PlanTier = 'pro' | 'max-5x' | 'max-20x';
+export type ProfileProvider = 'claude' | 'codex';
+export type ProviderModelMap = Partial<Record<ProfileProvider, string>>;
+export type ProviderSkillsMap = Partial<Record<ProfileProvider, string[]>>;
+
+export interface TaskRouteConfig {
+  /** Ordered account profiles to try. */
+  profiles: string[];
+  /** Provider-specific model defaults, e.g. Claude Opus and Codex GPT-5.5. */
+  models?: ProviderModelMap;
+  /** Skills requested on every provider. */
+  skills?: string[];
+  /** Additional provider-specific skills. */
+  providerSkills?: ProviderSkillsMap;
+}
 
 export const PLAN_TIERS: readonly PlanTier[] = ['pro', 'max-5x', 'max-20x'] as const;
 
@@ -110,6 +125,12 @@ export function planCapacity(plan?: PlanTier): number {
 export interface Profile {
   alias: string;
   configDir: string;
+  /** Runtime launched for this account. Missing means Claude for legacy registries. */
+  provider?: ProfileProvider;
+  /** Optional native Codex config profile loaded with `codex --profile <name>`. */
+  configProfile?: string;
+  /** Task labels this account is eligible to receive from the fleet MCP. */
+  taskTypes?: string[];
   /** Human-friendly description, e.g. "work Max account". */
   description?: string;
   /** Lower numbers are tried first when no explicit chain order is given. */
@@ -143,6 +164,8 @@ export interface ProfileConfig {
   routing?: RoutingConfig;
   /** Per-chain routing overrides, keyed by chain name (wins over `routing`). */
   chainRouting?: Record<string, RoutingConfig>;
+  /** Named task classes mapped to ordered profile fallbacks for MCP delegation. */
+  taskRouting?: Record<string, string[] | TaskRouteConfig>;
   /** Where to forward Claude Code `Notification` hook events (e.g. Discord). */
   notify?: NotifyConfig;
 }

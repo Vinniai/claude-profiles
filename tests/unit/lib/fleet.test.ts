@@ -14,13 +14,30 @@ vi.mock('../../../src/lib/state.js', async (importOriginal) => {
     setProfileCooldown: vi.fn(async () => {}),
     markNeedsAuth: vi.fn(async () => {}),
     markUsed: vi.fn(async () => {}),
+    loadState: vi.fn(async () => ({ profiles: {} })),
   };
 });
 vi.mock('../../../src/lib/profiles.js', () => ({
+  getProfileProvider: vi.fn((profile) => profile.provider ?? 'claude'),
   loadProfiles: vi.fn(async () => ({
     profiles: {
       josh: { alias: 'claude-josh', configDir: '/c/josh', plan: 'max-20x' },
       lockie: { alias: 'claude-lockie', configDir: '/c/lockie', plan: 'max-5x' },
+      codie: {
+        alias: 'codex-codie',
+        configDir: '/c/codie',
+        provider: 'codex',
+        configProfile: 'review',
+        taskTypes: ['review'],
+      },
+    },
+    chains: { mixed: ['josh', 'codie'] },
+    taskRouting: {
+      review: {
+        profiles: ['codie', 'josh'],
+        models: { claude: 'opus', codex: 'gpt-5.5' },
+        providerSkills: { codex: ['imagegen'] },
+      },
     },
   })),
 }));
@@ -34,15 +51,19 @@ vi.mock('../../../src/lib/handoff.js', () => ({
 import { spawn } from 'child_process';
 import {
   workerArgs,
+  codexWorkerArgs,
   workerEnv,
+  codexWorkerEnv,
   parseEnvelope,
   runWorker,
   applyWorkerEffects,
   runFleet,
   captureWorker,
+  dispatchRouted,
   type WorkerSpawn,
   type WorkerResult,
 } from '../../../src/lib/fleet.js';
+import { loadState } from '../../../src/lib/state.js';
 import { summarizeResult, taskFromArgs } from '../../../src/fleet/server.js';
 import {
   mcpConfigJson,
@@ -102,6 +123,87 @@ describe('workerArgs extras', () => {
     expect(
       workerArgs({ profile: 'x', prompt: 'hi', resume: 's', extraArgs: ['--allowedTools', 'a', 'b'] }),
     ).toEqual(['-p', 'hi', '--output-format', 'json', '--resume', 's', '--allowedTools', 'a', 'b']);
+  });
+});
+
+describe('Codex worker adapter', () => {
+  it('builds new and resumed JSONL invocations with a native config profile', () => {
+    const profile = {
+      alias: 'codex-codie',
+      configDir: '/c/codie',
+      provider: 'codex' as const,
+      configProfile: 'review',
+    };
+    expect(codexWorkerArgs({ profile: 'codie', prompt: 'inspect' }, profile)).toEqual([
+      '--profile',
+      'review',
+      '--config',
+      'cli_auth_credentials_store="file"',
+      'exec',
+      '--json',
+      'inspect',
+    ]);
+    expect(
+      codexWorkerArgs(
+        { profile: 'codie', prompt: 'continue', resume: 'thread-1' },
+        profile,
+      ),
+    ).toEqual([
+      '--profile',
+      'review',
+      '--config',
+      'cli_auth_credentials_store="file"',
+      'exec',
+      'resume',
+      '--json',
+      'thread-1',
+      'continue',
+    ]);
+  });
+
+  it('isolates CODEX_HOME and removes API-key billing overrides', () => {
+    const env = codexWorkerEnv('/c/codie', {
+      OPENAI_API_KEY: 'openai',
+      CODEX_API_KEY: 'codex',
+      PATH: '/bin',
+    });
+    expect(env.CODEX_HOME).toBe('/c/codie');
+    expect(env.OPENAI_API_KEY).toBeUndefined();
+    expect(env.CODEX_API_KEY).toBeUndefined();
+    expect(env.PATH).toBe('/bin');
+  });
+
+  it('normalizes Codex JSONL into WorkerResult', async () => {
+    const stdout = [
+      JSON.stringify({ type: 'thread.started', thread_id: 'thread-1' }),
+      JSON.stringify({
+        type: 'item.completed',
+        item: { type: 'agent_message', text: 'review complete' },
+      }),
+      JSON.stringify({ type: 'turn.completed', usage: { input_tokens: 2 } }),
+    ].join('\n');
+    const result = await runWorker(
+      { profile: 'codie', prompt: 'review' },
+      {
+        alias: 'codex-codie',
+        configDir: '/c/codie',
+        provider: 'codex',
+        configProfile: 'review',
+      },
+      {
+        spawnImpl: async (_dir, args, _timeout, provider) => {
+          expect(provider).toBe('codex');
+          expect(args).toContain('--json');
+          return { exitCode: 0, stdout, stderr: '' };
+        },
+      },
+    );
+    expect(result).toMatchObject({
+      ok: true,
+      provider: 'codex',
+      text: 'review complete',
+      sessionId: 'thread-1',
+    });
   });
 });
 
@@ -364,6 +466,202 @@ describe('runFleet', () => {
   });
 });
 
+describe('routed fleet dispatch', () => {
+  it('preserves the configured session owner when resuming despite cached health', async () => {
+    vi.mocked(loadState).mockResolvedValueOnce({
+      profiles: {
+        josh: {
+          cooldownUntil: new Date(NOW.getTime() + 60_000).toISOString(),
+        },
+      },
+    });
+    const calls: string[] = [];
+    const result = await dispatchRouted(
+      {
+        chain: 'mixed',
+        prompt: 'continue',
+        resume: 'claude-session-1',
+      },
+      {
+        recordEffects: false,
+        now: NOW,
+        spawnImpl: async (dir, args) => {
+          calls.push(dir);
+          if (dir === '/c/josh') {
+            expect(args).toContain('claude-session-1');
+            return { exitCode: 1, stdout: 'usage limit reached', stderr: '' };
+          }
+          expect(args).not.toContain('claude-session-1');
+          return {
+            exitCode: 0,
+            stdout: [
+              JSON.stringify({ type: 'thread.started', thread_id: 'codex-thread' }),
+              JSON.stringify({
+                type: 'item.completed',
+                item: { type: 'agent_message', text: 'continued' },
+              }),
+            ].join('\n'),
+            stderr: '',
+          };
+        },
+      },
+    );
+
+    expect(calls).toEqual(['/c/josh', '/c/codie']);
+    expect(result.ok).toBe(true);
+  });
+
+  it('selects a task route and records the attempted profile', async () => {
+    const result = await dispatchRouted(
+      { taskType: 'review', prompt: 'review this' },
+      {
+        recordEffects: false,
+        spawnImpl: async (dir) => ({
+          exitCode: 0,
+          stdout:
+            dir === '/c/codie'
+              ? [
+                  JSON.stringify({
+                    type: 'thread.started',
+                    thread_id: 'codex-thread',
+                  }),
+                  JSON.stringify({
+                    type: 'item.completed',
+                    item: { type: 'agent_message', text: 'done' },
+                  }),
+                  JSON.stringify({ type: 'turn.completed', usage: {} }),
+                ].join('\n')
+              : okEnvelope('claude'),
+          stderr: '',
+        }),
+      },
+    );
+    expect(result.profile).toBe('codie');
+    expect(result.attemptedProfiles).toEqual(['codie']);
+    expect(result.modelUsed).toBe('gpt-5.5');
+    expect(result.skillsUsed).toEqual(['imagegen']);
+  });
+
+  it('falls back on a rate limit but not on a generic task failure', async () => {
+    const fallback = await dispatchRouted(
+      { chain: 'mixed', prompt: 'work' },
+      {
+        recordEffects: false,
+        spawnImpl: async (dir) =>
+          dir === '/c/josh'
+            ? {
+                exitCode: 1,
+                stdout: JSON.stringify({
+                  is_error: true,
+                  result: 'usage limit reached',
+                }),
+                stderr: '',
+              }
+            : {
+                exitCode: 0,
+                stdout: [
+                  JSON.stringify({
+                    type: 'thread.started',
+                    thread_id: 'thread-2',
+                  }),
+                  JSON.stringify({
+                    type: 'item.completed',
+                    item: { type: 'agent_message', text: 'fallback worked' },
+                  }),
+                ].join('\n'),
+                stderr: '',
+              },
+      },
+    );
+    expect(fallback.attemptedProfiles).toEqual(['josh', 'codie']);
+    expect(fallback.ok).toBe(true);
+
+    const stopped = await dispatchRouted(
+      { chain: 'mixed', prompt: 'work' },
+      {
+        recordEffects: false,
+        spawnImpl: async () => ({
+          exitCode: 1,
+          stdout: 'tests failed because code is wrong',
+          stderr: '',
+        }),
+      },
+    );
+    expect(stopped.attemptedProfiles).toEqual(['josh']);
+    expect(stopped.ok).toBe(false);
+  });
+
+  it('uses provider model/skill mappings and hands context to a fresh fallback session', async () => {
+    const calls: Array<{
+      dir: string;
+      args: string[];
+      provider?: string;
+    }> = [];
+    const result = await dispatchRouted(
+      {
+        chain: 'mixed',
+        prompt: 'Create the launch illustration',
+        resume: 'claude-session-1',
+        handoffContext: 'The user approved a dark blue palette. Save the image under assets/.',
+        models: { claude: 'opus', codex: 'gpt-5.5' },
+        providerSkills: { codex: ['imagegen'] },
+      },
+      {
+        recordEffects: false,
+        spawnImpl: async (dir, args, _timeout, provider) => {
+          calls.push({ dir, args, provider });
+          if (dir === '/c/josh') {
+            return {
+              exitCode: 1,
+              stdout: JSON.stringify({
+                is_error: true,
+                result: 'usage limit reached',
+              }),
+              stderr: '',
+            };
+          }
+          return {
+            exitCode: 0,
+            stdout: [
+              JSON.stringify({
+                type: 'thread.started',
+                thread_id: 'codex-session-2',
+              }),
+              JSON.stringify({
+                type: 'item.completed',
+                item: { type: 'agent_message', text: 'image created' },
+              }),
+            ].join('\n'),
+            stderr: '',
+          };
+        },
+      },
+    );
+
+    expect(calls[0].provider).toBe('claude');
+    expect(calls[0].args).toContain('opus');
+    expect(calls[0].args).toContain('claude-session-1');
+    expect(calls[1].provider).toBe('codex');
+    expect(calls[1].args).toContain('gpt-5.5');
+    expect(calls[1].args).not.toContain('claude-session-1');
+    const fallbackPrompt = calls[1].args.at(-1) ?? '';
+    expect(fallbackPrompt).toContain('Use the installed "imagegen" skill');
+    expect(fallbackPrompt).toContain('dark blue palette');
+    expect(fallbackPrompt).toContain('josh (claude, opus) failed');
+    expect(fallbackPrompt).toContain('cannot be resumed here');
+    expect(result).toMatchObject({
+      ok: true,
+      profile: 'codie',
+      provider: 'codex',
+      modelUsed: 'gpt-5.5',
+      skillsUsed: ['imagegen'],
+      handoffFromSessionId: 'claude-session-1',
+      sessionId: 'codex-session-2',
+    });
+    expect(result.attempts).toHaveLength(2);
+  });
+});
+
 describe('captureWorker timeout escalation', () => {
   function fakeChild() {
     const child = new EventEmitter() as EventEmitter & {
@@ -435,8 +733,8 @@ describe('server helpers', () => {
     expect(s).toMatchObject({ ok: false, reason: 'command failed', error: 'boom' });
   });
   it('taskFromArgs validates required fields', () => {
-    expect(taskFromArgs({ profile: 'josh', prompt: 'hi', model: 'm' })).toEqual({
-      profile: 'josh', prompt: 'hi', model: 'm', resume: undefined, timeoutMs: undefined,
+    expect(taskFromArgs({ profile: 'josh', prompt: 'hi', model: 'm' })).toMatchObject({
+      profile: 'josh', prompt: 'hi', model: 'm',
     });
     expect(taskFromArgs({ profile: 'josh' })).toBeNull();
     expect(taskFromArgs({ prompt: 'hi' })).toBeNull();
