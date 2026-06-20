@@ -56,17 +56,17 @@ npm test
 
 Currently tested modules:
 
-- ✅ `lib/sync.ts` - File comparison, metadata operations, sync functions
-- ✅ `types/index.ts` - ClaudeProfilesError class and ErrorCode enum
-- ✅ `utils/logger.ts` - Path formatting utility
+- ✅ Profile, chain, routing, usage, handoff, state, and fleet worker libraries
+- ✅ Claude and Codex output/error parsing, failover effects, and concurrency controls
+- ✅ Fleet MCP argument validation and routed delegation behavior
+- ✅ CLI commands, hooks, statusline rendering, sync setup, Git helpers, and shared types
 
 ### Modules Not Unit Tested
 
 Some modules are better tested through integration tests rather than unit tests:
 
-- **`lib/git.ts`** - Git operations tested in integration tests with real git repos
 - **`lib/paths.ts`** - Platform detection tested in integration tests
-- **`commands/*.ts`** - Command logic tested end-to-end in integration tests
+- Full multi-machine Git sync behavior is exercised by `test-integration.sh`
 
 ## Integration Test Coverage
 

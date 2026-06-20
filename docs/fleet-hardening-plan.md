@@ -210,10 +210,10 @@ function control(prompt: string, reset: boolean): Promise<WorkerResult> {
 
 ## Implementation checklist
 
-- [ ] **T1** — wrap `handle(req, res)` in `.catch()` with a `headersSent`-guarded 500 / `res.destroy()` fallback (`orchestrator.ts:312`).
-- [ ] **L1** — add `killTimer` SIGKILL escalation in `captureWorker`; clear it in both `'error'` and `'close'` handlers (`fleet.ts:139`).
-- [ ] **L2** — switch `runFleet` to `Promise.allSettled`; synthesize a failed `WorkerResult` for rejected profiles (`fleet.ts:318`). Note the `runFleet`-vs-`dispatch` divergence.
-- [ ] **T2** — serialize `control()` via a promise chain; optionally route `/reset` through the same chain (`orchestrator.ts:297`).
+- [x] **T1** — wrap `handle(req, res)` in `.catch()` with a `headersSent`-guarded 500 / `res.destroy()` fallback (`orchestrator.ts:312`).
+- [x] **L1** — add `killTimer` SIGKILL escalation in `captureWorker`; clear it in both `'error'` and `'close'` handlers (`fleet.ts:139`).
+- [x] **L2** — switch `runFleet` to `Promise.allSettled`; synthesize a failed `WorkerResult` for rejected profiles (`fleet.ts:318`). Note the `runFleet`-vs-`dispatch` divergence.
+- [x] **T2** — serialize `control()` via a promise chain and route `/reset` through the same chain (`orchestrator.ts:297`).
 
 ## Verification
 

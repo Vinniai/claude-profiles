@@ -173,6 +173,51 @@ describe('profiles.ts', () => {
       );
       expect(statuslineStat.isSymbolicLink()).toBe(true);
     });
+
+    it('creates an isolated Codex home with file-backed credentials', async () => {
+      const codexHome = path.join(tempDir, '.codex');
+      await fs.ensureDir(path.join(codexHome, 'skills'));
+      await fs.writeFile(path.join(codexHome, 'AGENTS.md'), '# Shared Codex rules');
+      await fs.writeFile(path.join(codexHome, 'review.config.toml'), 'model = "gpt-5.5"\n');
+      await fs.writeFile(path.join(codexHome, 'auth.json'), '{"secret":"do-not-share"}');
+
+      const profile = await createProfile('codie', {
+        provider: 'codex',
+        configProfile: 'review',
+        taskTypes: ['review'],
+      });
+
+      expect(profile).toMatchObject({
+        provider: 'codex',
+        alias: 'codex-codie',
+        configProfile: 'review',
+        taskTypes: ['review'],
+      });
+      expect(await fs.readFile(path.join(profile.configDir, 'config.toml'), 'utf-8'))
+        .toContain('cli_auth_credentials_store = "file"');
+      expect(await fs.pathExists(path.join(profile.configDir, 'auth.json'))).toBe(false);
+      expect((await fs.lstat(path.join(profile.configDir, 'AGENTS.md'))).isSymbolicLink())
+        .toBe(true);
+      expect(
+        (await fs.lstat(path.join(profile.configDir, 'review.config.toml'))).isSymbolicLink(),
+      ).toBe(true);
+      expect(getShellAliasLine(profile)).toContain(
+        `CODEX_HOME="${profile.configDir}" codex --profile review`,
+      );
+    });
+
+    it('rejects a missing native Codex config profile before creating files', async () => {
+      await expect(
+        createProfile('missing-config', {
+          provider: 'codex',
+          configProfile: 'does-not-exist',
+        }),
+      ).rejects.toMatchObject({
+        code: 'INVALID_CONFIG',
+        message: expect.stringContaining('does-not-exist'),
+      });
+      expect(await fs.pathExists(path.join(tempDir, '.codex-missing-config'))).toBe(false);
+    });
   });
 
   describe('createProfile — atomic directory creation [2]', () => {

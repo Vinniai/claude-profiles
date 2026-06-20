@@ -4,7 +4,12 @@ import path from 'path';
 import os from 'os';
 import { getConfigPaths, getClaudeProfilesDir } from './paths.js';
 import { ClaudeProfilesError, ErrorCode } from '../types/index.js';
-import type { ProfileConfig, Profile, PlanTier } from '../types/index.js';
+import type {
+  ProfileConfig,
+  Profile,
+  PlanTier,
+  ProfileProvider,
+} from '../types/index.js';
 
 const PROFILES_FILE = 'profiles.json';
 
@@ -19,6 +24,16 @@ export const SHARED_ITEMS = [
   { name: 'skills', type: 'directory' as const },
   { name: 'plugins', type: 'directory' as const },
   { name: 'keybindings.json', type: 'file' as const },
+];
+
+export const CODEX_SHARED_ITEMS = [
+  { name: 'AGENTS.md', type: 'file' as const },
+  { name: 'AGENTS.override.md', type: 'file' as const },
+  { name: 'hooks.json', type: 'file' as const },
+  { name: 'agents', type: 'directory' as const },
+  { name: 'skills', type: 'directory' as const },
+  { name: 'plugins', type: 'directory' as const },
+  { name: 'rules', type: 'directory' as const },
 ];
 
 function getProfilesPath(): string {
@@ -40,9 +55,41 @@ export async function saveProfiles(config: ProfileConfig): Promise<void> {
   await fs.rename(tmpPath, profilesPath);
 }
 
-export function getProfileConfigDir(name: string): string {
+export function getProfileProvider(profile: Profile): ProfileProvider {
+  return profile.provider ?? 'claude';
+}
+
+export function getProfileConfigDir(
+  name: string,
+  provider: ProfileProvider = 'claude'
+): string {
   const home = os.homedir();
-  return path.join(home, `.claude-${name}`);
+  return path.join(home, `.${provider}-${name}`);
+}
+
+export async function ensureCodexConfigProfile(
+  profile: Profile,
+  configProfile: string,
+): Promise<void> {
+  if (getProfileProvider(profile) !== 'codex') {
+    throw new ClaudeProfilesError(
+      '--config-profile is only valid for Codex profiles',
+      ErrorCode.INVALID_CONFIG,
+    );
+  }
+  const filename = `${configProfile}.config.toml`;
+  const target = path.join(profile.configDir, filename);
+  if (await fs.pathExists(target)) return;
+
+  const source = path.join(os.homedir(), '.codex', filename);
+  if (!(await fs.pathExists(source))) {
+    throw new ClaudeProfilesError(
+      `Codex config profile "${configProfile}" not found`,
+      ErrorCode.INVALID_CONFIG,
+      `Create ${source} first, then retry.`,
+    );
+  }
+  await fs.symlink(source, target);
 }
 
 export interface CreateProfileOptions {
@@ -54,6 +101,12 @@ export interface CreateProfileOptions {
   priority?: number;
   /** Anthropic subscription tier (feeds default weight + ordering). */
   plan?: PlanTier;
+  /** CLI/runtime provider. Defaults to Claude for backward compatibility. */
+  provider?: ProfileProvider;
+  /** Native Codex config profile selected inside this isolated CODEX_HOME. */
+  configProfile?: string;
+  /** Task labels used by MCP automatic assignment. */
+  taskTypes?: string[];
 }
 
 export async function createProfile(
@@ -61,6 +114,7 @@ export async function createProfile(
   options: CreateProfileOptions = {}
 ): Promise<Profile> {
   const { shareStatusline = false, shareClaudeMd = false } = options;
+  const provider = options.provider ?? 'claude';
   const config = await loadProfiles();
 
   if (config.profiles[name]) {
@@ -71,8 +125,22 @@ export async function createProfile(
     );
   }
 
-  const configDir = getProfileConfigDir(name);
-  const alias = `claude-${name}`;
+  const configDir = getProfileConfigDir(name, provider);
+  const alias = `${provider}-${name}`;
+  if (provider === 'codex' && options.configProfile) {
+    const source = path.join(
+      os.homedir(),
+      '.codex',
+      `${options.configProfile}.config.toml`,
+    );
+    if (!(await fs.pathExists(source))) {
+      throw new ClaudeProfilesError(
+        `Codex config profile "${options.configProfile}" not found`,
+        ErrorCode.INVALID_CONFIG,
+        `Create ${source} first, then retry.`,
+      );
+    }
+  }
 
   // Atomic directory creation — avoids TOCTOU race between exists-check and mkdir
   try {
@@ -88,12 +156,33 @@ export async function createProfile(
     throw err;
   }
 
-  // Create symlinks for shared items
+  // Create provider-safe symlinks. Credentials and mutable session state are
+  // never shared: each profile owns its CLAUDE_CONFIG_DIR or CODEX_HOME.
   const { claudeConfigDir } = getConfigPaths();
-  await createSymlinks(claudeConfigDir, configDir);
+  if (provider === 'claude') {
+    await createSymlinks(claudeConfigDir, configDir);
+  } else {
+    const codexConfigDir = path.join(os.homedir(), '.codex');
+    await createSymlinks(codexConfigDir, configDir, CODEX_SHARED_ITEMS);
+    await fs.writeFile(
+      path.join(configDir, 'config.toml'),
+      [
+        '# Managed by claude-profiles.',
+        '# File-backed credentials keep this CODEX_HOME account isolated.',
+        'cli_auth_credentials_store = "file"',
+        '',
+      ].join('\n')
+    );
+    if (options.configProfile) {
+      await ensureCodexConfigProfile(
+        { alias, configDir, provider },
+        options.configProfile,
+      );
+    }
+  }
 
-  // Optionally symlink statusline.sh from main config
-  if (shareStatusline) {
+  // Claude-only shared presentation and instructions.
+  if (provider === 'claude' && shareStatusline) {
     const sourcePath = path.join(claudeConfigDir, 'statusline.sh');
     const targetPath = path.join(configDir, 'statusline.sh');
     if (await fs.pathExists(sourcePath)) {
@@ -102,25 +191,30 @@ export async function createProfile(
   }
 
   // Handle CLAUDE.md: symlink from main config or create independent file
-  const claudeMdPath = path.join(configDir, 'CLAUDE.md');
-  const claudeMdSource = path.join(claudeConfigDir, 'CLAUDE.md');
-  if (shareClaudeMd && (await fs.pathExists(claudeMdSource))) {
-    await fs.symlink(claudeMdSource, claudeMdPath);
-  } else {
-    await fs.writeFile(
-      claudeMdPath,
-      `# Claude Code Configuration (${name} profile)\n\nThis file is loaded by Claude Code at the start of every session.\n`
-    );
+  if (provider === 'claude') {
+    const claudeMdPath = path.join(configDir, 'CLAUDE.md');
+    const claudeMdSource = path.join(claudeConfigDir, 'CLAUDE.md');
+    if (shareClaudeMd && (await fs.pathExists(claudeMdSource))) {
+      await fs.symlink(claudeMdSource, claudeMdPath);
+    } else {
+      await fs.writeFile(
+        claudeMdPath,
+        `# Claude Code Configuration (${name} profile)\n\nThis file is loaded by Claude Code at the start of every session.\n`
+      );
+    }
   }
 
   // Save profile to registry
   const profile: Profile = {
     alias,
     configDir,
+    provider,
   };
   if (options.description) profile.description = options.description;
   if (typeof options.priority === 'number') profile.priority = options.priority;
   if (options.plan) profile.plan = options.plan;
+  if (options.configProfile) profile.configProfile = options.configProfile;
+  if (options.taskTypes?.length) profile.taskTypes = [...new Set(options.taskTypes)];
   config.profiles[name] = profile;
   await saveProfiles(config);
 
@@ -129,11 +223,12 @@ export async function createProfile(
 
 export async function createSymlinks(
   sourceDir: string,
-  targetDir: string
+  targetDir: string,
+  items: ReadonlyArray<{ name: string; type: 'file' | 'directory' }> = SHARED_ITEMS
 ): Promise<string[]> {
   const created: string[] = [];
 
-  for (const item of SHARED_ITEMS) {
+  for (const item of items) {
     const sourcePath = path.join(sourceDir, item.name);
     const targetPath = path.join(targetDir, item.name);
 
@@ -172,6 +267,18 @@ export async function refreshSymlinks(name: string): Promise<string[]> {
   }
 
   const { claudeConfigDir } = getConfigPaths();
+  if (getProfileProvider(profile) === 'codex') {
+    const created = await createSymlinks(
+      path.join(os.homedir(), '.codex'),
+      profile.configDir,
+      CODEX_SHARED_ITEMS
+    );
+    if (profile.configProfile) {
+      await ensureCodexConfigProfile(profile, profile.configProfile);
+      created.push(`${profile.configProfile}.config.toml`);
+    }
+    return created;
+  }
   return createSymlinks(claudeConfigDir, profile.configDir);
 }
 
@@ -207,6 +314,12 @@ const CHAIN_MARKER = 'claude-profiles chain';
 const MARKER_BRANDS = '(?:jean-claude|claude-profiles)';
 
 export function getShellAliasLine(profile: Profile): string {
+  if (getProfileProvider(profile) === 'codex') {
+    const nativeProfile = profile.configProfile
+      ? ` --profile ${profile.configProfile}`
+      : '';
+    return `alias ${profile.alias}='CODEX_HOME="${profile.configDir}" codex${nativeProfile}'`;
+  }
   return `alias ${profile.alias}='CLAUDE_CONFIG_DIR="${profile.configDir}" claude'`;
 }
 

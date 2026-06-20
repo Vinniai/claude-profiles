@@ -4,7 +4,7 @@
   "publishConfig": {
     "access": "public"
   },
-  "description": "Manage multiple Claude Code profiles, route across OAuth accounts, and fall back on limit/auth/server errors",
+  "description": "Manage isolated Claude Code and Codex profiles, route tasks across accounts, and fail over on limit/auth/server errors",
   "author": "Vinniai",
   "contributors": [
     "Mike Veerman (original jean-claude author)"
@@ -34,6 +34,9 @@
   "keywords": [
     "claude",
     "claude-code",
+    "codex",
+    "openai",
+    "mcp",
     "dotfiles",
     "sync",
     "cli",

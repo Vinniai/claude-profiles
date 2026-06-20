@@ -1,6 +1,6 @@
 # CLAUDE-PROFILES
 
-**Run multiple Claude Code OAuth accounts side by side, and fall back automatically when one hits a usage limit, auth, or server error.**
+**Run isolated Claude Code and Codex accounts side by side, route tasks to the right profile, and fall back automatically on usage-limit, auth, or server errors.**
 
 > A fork of [jean-claude](https://github.com/MikeVeerman/jean-claude) by Mike Veerman, extended with multi-account routing and automatic failover.
 
@@ -86,6 +86,147 @@ claude-profiles chain create default --profiles alice,bob
 # Run with automatic failover — installs a `claude-default` alias too
 claude-default -p "summarize this repo"
 ```
+
+## Codex profiles and fleet MCP
+
+Codex has two profile layers, and this project keeps them separate:
+
+- A managed account profile is an isolated `CODEX_HOME` such as
+  `~/.codex-openai-work`. It owns that account's `auth.json`, sessions, logs, and
+  state.
+- A native Codex config profile is a file such as
+  `~/.codex/deep-review.config.toml`, selected with `codex --profile
+  deep-review`. It controls model, reasoning, sandbox, MCP, and other runtime
+  settings.
+
+Create and authenticate an isolated Codex account:
+
+```bash
+# Optional native Codex configuration layer
+cat > ~/.codex/deep-review.config.toml <<'EOF'
+model = "gpt-5.5"
+model_reasoning_effort = "high"
+sandbox_mode = "read-only"
+EOF
+
+claude-profiles create openai-work \
+  --provider codex \
+  --config-profile deep-review \
+  --tasks review,architecture
+
+claude-profiles login openai-work
+codex-openai-work
+```
+
+Codex profiles force `cli_auth_credentials_store = "file"` inside their
+isolated home. This is necessary for multiple accounts: a shared OS keychain
+entry would defeat the isolation. `OPENAI_API_KEY` and `CODEX_API_KEY` are
+removed from fleet workers so an account-profile task cannot silently switch to
+API billing.
+
+Register this project's fleet server in any Claude or Codex profile:
+
+```bash
+claude-profiles fleet install openai-work
+CODEX_HOME=~/.codex-openai-work codex
+```
+
+The Codex session now receives the MCP tools `delegate`,
+`delegate_parallel`, and `fleet_status`.
+
+### Assign work and configure fallbacks
+
+An MCP `delegate` call must select exactly one routing source:
+
+```json
+{"profile":"openai-work","prompt":"Review the authentication changes"}
+{"chain":"review-fallback","prompt":"Review this PR","fallback":true}
+{"taskType":"review","prompt":"Review this PR"}
+```
+
+Add explicit ordered fallback accounts when needed:
+
+```json
+{
+  "profile": "openai-work",
+  "fallbackProfiles": ["alice", "bob"],
+  "fallback": true,
+  "prompt": "Find the race condition and propose a minimal fix"
+}
+```
+
+Configure reusable task routes:
+
+```bash
+claude-profiles fleet route set review \
+  --profiles alice,openai-work \
+  --claude-model opus \
+  --codex-model gpt-5.5
+
+claude-profiles fleet route set implementation --profiles alice,openai-work
+
+claude-profiles fleet route set image-generation \
+  --profiles openai-work,alice \
+  --codex-model gpt-5.5 \
+  --codex-skills imagegen
+
+claude-profiles fleet route list
+```
+
+You can also assign task labels directly to a profile:
+
+```bash
+claude-profiles profile set openai-work --tasks review,architecture
+```
+
+Fallback is deliberately narrow. The fleet retries another profile only for a
+rate/usage limit, expired authentication, or a transient server error. A normal
+task failure, failing test, denied command, or invalid prompt is returned
+immediately instead of being hidden by another account.
+
+### Provider-specific models, skills, and session handoff
+
+Mixed Claude/Codex chains can select a valid model for each provider:
+
+```json
+{
+  "chain": "hybrid",
+  "prompt": "Create the approved launch illustration",
+  "models": {
+    "claude": "opus",
+    "codex": "gpt-5.5"
+  },
+  "providerSkills": {
+    "codex": ["imagegen"]
+  },
+  "handoffContext": "The user approved a dark blue palette. Save the result under assets/launch/.",
+  "resume": "existing-claude-session-id",
+  "fallback": true
+}
+```
+
+If Claude is rate-limited, the Codex attempt receives:
+
+- the original prompt;
+- the supplied `handoffContext`;
+- the failed profile/provider/model and reason;
+- an explicit instruction to use the requested installed skills.
+
+Session IDs are account- and provider-local. A Claude session ID is therefore
+never passed to Codex, or to another Claude account. The fallback starts a fresh
+session and its result is returned through the same MCP call to the original
+orchestrator session. The response includes:
+
+- `sessionId` for the new successful worker session;
+- `handoffFromSessionId` for the original session;
+- `attempts`, including each profile, provider, model, skills, and failure;
+- `modelUsed` and `skillsUsed`.
+
+`skills` applies to every provider. `providerSkills` adds provider-specific
+requirements. The selected profile must actually have the named skill and its
+required MCP/plugin tools installed. For example, requesting `imagegen` does not
+manufacture an image tool if that Codex profile cannot access one; the worker is
+instructed to report the missing capability explicitly.
 
 > `create` and `login` are root-level shortcuts. The longer `claude-profiles profile create` / `profile login` still work, and `profile list/set/delete/refresh` live under `profile`.
 

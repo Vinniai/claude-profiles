@@ -1,8 +1,21 @@
 import { Command } from 'commander';
+import { spawn } from 'child_process';
 import { startFleetServer } from '../fleet/server.js';
-import { startRemoteControl, launchCoordinator } from '../fleet/orchestrator.js';
-import { dispatch, runFleet, fleetStatus, type WorkerTask } from '../lib/fleet.js';
+import {
+  startRemoteControl,
+  launchCoordinator,
+  selfInvocation,
+} from '../fleet/orchestrator.js';
+import {
+  dispatch,
+  runFleet,
+  fleetStatus,
+  resolveProfile,
+  type WorkerTask,
+} from '../lib/fleet.js';
+import { getProfileProvider, loadProfiles, saveProfiles } from '../lib/profiles.js';
 import { logger } from '../utils/logger.js';
+import { ClaudeProfilesError, ErrorCode } from '../types/index.js';
 
 /**
  * `claude-profiles fleet` — run the fleet MCP server, or dispatch a task
@@ -27,7 +40,7 @@ interface ServerOptions {
 
 export const fleetCommand = new Command('fleet')
   .description(
-    'Run the fleet MCP server so one orchestrator session can delegate work to your other accounts (headless subscription-OAuth workers)',
+    'Run the fleet MCP server so an orchestrator can delegate work across Claude and Codex account profiles',
   )
   .option('-p, --port <port>', 'Localhost HTTP face port (0 to disable)', '8798')
   .option('--no-stdio', 'Skip the MCP stdio transport (HTTP-only test mode)')
@@ -50,6 +63,176 @@ export const fleetCommand = new Command('fleet')
 
 // `fleet http-control` — HEADLESS orchestrator driven over localhost HTTP. For
 // steering from a phone/browser use `fleet coordinator` (official Remote Control).
+fleetCommand
+  .command('install <profile>')
+  .description('Register the fleet MCP server in a Claude or Codex profile')
+  .action(async (profileName: string) => {
+    const profile = await resolveProfile(profileName);
+    const provider = getProfileProvider(profile);
+    const self = selfInvocation();
+    const bin =
+      provider === 'codex'
+        ? process.env.CLAUDE_PROFILES_CODEX_BIN || 'codex'
+        : process.env.CLAUDE_PROFILES_CLAUDE_BIN || 'claude';
+    const args =
+      provider === 'codex'
+        ? ['mcp', 'add', 'fleet', '--', self.command, ...self.args, 'fleet', '--no-http']
+        : [
+            'mcp',
+            'add',
+            'fleet',
+            '--scope',
+            'user',
+            '--',
+            self.command,
+            ...self.args,
+            'fleet',
+            '--no-http',
+          ];
+    const env =
+      provider === 'codex'
+        ? { ...process.env, CODEX_HOME: profile.configDir }
+        : { ...process.env, CLAUDE_CONFIG_DIR: profile.configDir };
+
+    const code = await new Promise<number>((resolve, reject) => {
+      const child = spawn(bin, args, { env, stdio: 'inherit' });
+      child.on('error', (err: NodeJS.ErrnoException) => {
+        if (err.code === 'ENOENT') {
+          reject(
+            new ClaudeProfilesError(
+              `Could not find "${bin}" on PATH`,
+              provider === 'codex'
+                ? ErrorCode.CODEX_NOT_FOUND
+                : ErrorCode.CLAUDE_NOT_FOUND,
+            ),
+          );
+          return;
+        }
+        reject(err);
+      });
+      child.on('close', (status) => resolve(status ?? 1));
+    });
+    if (code !== 0) {
+      throw new ClaudeProfilesError(
+        `Failed to register fleet MCP in "${profileName}"`,
+        ErrorCode.INVALID_CONFIG,
+        'Remove an existing fleet registration first, then retry.',
+      );
+    }
+    logger.success(`Fleet MCP registered for ${provider} profile "${profileName}".`);
+  });
+
+const routeCommand = new Command('route').description(
+  'Manage task-type assignments used by MCP delegate(taskType=...)',
+);
+
+routeCommand
+  .command('set <taskType>')
+  .requiredOption('--profiles <list>', 'Ordered comma-separated profiles')
+  .option('--claude-model <model>', 'Claude model for this task route')
+  .option('--codex-model <model>', 'Codex model for this task route')
+  .option('--skills <list>', 'Comma-separated skills requested on every provider')
+  .option('--claude-skills <list>', 'Additional Claude-only skills')
+  .option('--codex-skills <list>', 'Additional Codex-only skills, e.g. imagegen')
+  .action(async (taskType: string, opts: {
+    profiles: string;
+    claudeModel?: string;
+    codexModel?: string;
+    skills?: string;
+    claudeSkills?: string;
+    codexSkills?: string;
+  }) => {
+    const config = await loadProfiles();
+    const names = opts.profiles
+      .split(',')
+      .map((v) => v.trim())
+      .filter(Boolean);
+    const unknown = names.filter((name) => !config.profiles[name]);
+    if (!names.length || unknown.length) {
+      throw new ClaudeProfilesError(
+        unknown.length
+          ? `Unknown profile${unknown.length > 1 ? 's' : ''}: ${unknown.join(', ')}`
+          : 'A task route requires at least one profile',
+        ErrorCode.PROFILE_NOT_FOUND,
+      );
+    }
+    config.taskRouting ??= {};
+    const list = (value?: string): string[] | undefined => {
+      if (!value) return undefined;
+      const values = [...new Set(value.split(',').map((v) => v.trim()).filter(Boolean))];
+      return values.length ? values : undefined;
+    };
+    const rich =
+      opts.claudeModel ||
+      opts.codexModel ||
+      opts.skills ||
+      opts.claudeSkills ||
+      opts.codexSkills;
+    config.taskRouting[taskType] = rich
+      ? {
+          profiles: [...new Set(names)],
+          models: {
+            claude: opts.claudeModel,
+            codex: opts.codexModel,
+          },
+          skills: list(opts.skills),
+          providerSkills: {
+            claude: list(opts.claudeSkills),
+            codex: list(opts.codexSkills),
+          },
+        }
+      : [...new Set(names)];
+    await saveProfiles(config);
+    logger.success(`Task route "${taskType}": ${[...new Set(names)].join(' → ')}`);
+  });
+
+routeCommand
+  .command('list')
+  .action(async () => {
+    const routes = (await loadProfiles()).taskRouting ?? {};
+    if (!Object.keys(routes).length) {
+      logger.dim('No task routes configured.');
+      return;
+    }
+    for (const [taskType, route] of Object.entries(routes)) {
+      if (Array.isArray(route)) {
+        logger.info(`${taskType}: ${route.join(' → ')}`);
+        continue;
+      }
+      const details = [
+        route.models?.claude ? `claude=${route.models.claude}` : undefined,
+        route.models?.codex ? `codex=${route.models.codex}` : undefined,
+        route.skills?.length ? `skills=${route.skills.join(',')}` : undefined,
+        route.providerSkills?.claude?.length
+          ? `claude-skills=${route.providerSkills.claude.join(',')}`
+          : undefined,
+        route.providerSkills?.codex?.length
+          ? `codex-skills=${route.providerSkills.codex.join(',')}`
+          : undefined,
+      ].filter(Boolean);
+      logger.info(
+        `${taskType}: ${route.profiles.join(' → ')}${details.length ? `  (${details.join('; ')})` : ''}`,
+      );
+    }
+  });
+
+routeCommand
+  .command('delete <taskType>')
+  .action(async (taskType: string) => {
+    const config = await loadProfiles();
+    if (!config.taskRouting?.[taskType]) {
+      throw new ClaudeProfilesError(
+        `Task route "${taskType}" not found`,
+        ErrorCode.INVALID_CONFIG,
+      );
+    }
+    delete config.taskRouting[taskType];
+    await saveProfiles(config);
+    logger.success(`Deleted task route "${taskType}".`);
+  });
+
+fleetCommand.addCommand(routeCommand);
+
 fleetCommand
   .command('http-control')
   .description('Run a lead profile as a headless orchestrator you drive over localhost HTTP (POST /control)')
